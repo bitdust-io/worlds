@@ -1,171 +1,669 @@
+import os
 import sys
-
+import math
+import random
 
 _Debug = True
 
 
+from kivy.base import EventLoop
 from kivy.app import App
+from kivy.cache import Cache
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.uix.widget import Widget
+from kivy.uix.image import Image
+from kivy.resources import resource_find
+from kivy.properties import ObjectProperty  # @UnresolvedImport
 from kivy.graphics.transformation import Matrix  # @UnresolvedImport
-from kivy.graphics.opengl import glGetError, glEnable, glDisable, GL_DEPTH_TEST  # @UnresolvedImport
+from kivy.graphics.opengl import (
+    glGetError, glEnable, glDisable, GL_BLEND, GL_DEPTH_TEST,  # @UnresolvedImport
+    glBlendFunc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,  # @UnresolvedImport
+    glDepthFunc, GL_LEQUAL,  # @UnresolvedImport
+)
 from kivy.graphics.instructions import InstructionGroup  # @UnresolvedImport
-from kivy.graphics.context_instructions import Transform  # @UnresolvedImport
 from kivy.graphics import (
     RenderContext, Callback, BindTexture,
     ChangeState, PushState, PopState,
-    PushMatrix, PopMatrix, Scale,
-    Color, Translate, Rotate, Mesh, UpdateNormalMatrix,
+    PushMatrix, PopMatrix,
+    # Scale,
+    Color, Translate, Rotate, Mesh, Line,
+    # UpdateNormalMatrix,
 )
 
-import dat
+import const
 import mth
 import res
-
-
-vertex_shader_src = """
-#ifdef GL_ES
-    precision highp float;
-#endif
-
-attribute vec3  v_pos;
-attribute vec3  v_normal;
-attribute vec2  v_tex_coord;
-
-uniform mat4 modelview_mat;
-uniform mat4 projection_mat;
-
-varying vec2 tex_coord0;
-varying vec4 normal_vec;
-varying vec4 vertex_pos;
-
-void main (void) {
-    vec4 pos = modelview_mat * vec4(v_pos, 1.0);
-    vertex_pos = pos;
-    normal_vec = vec4(v_normal,0.0);
-    gl_Position = projection_mat * pos;
-    tex_coord0 = v_tex_coord;
-}
-"""
-
-
-fragment_shader_src = """
-#ifdef GL_ES
-    precision highp float;
-#endif
-
-varying vec4 normal_vec;
-varying vec4 vertex_pos;
-varying vec2 tex_coord0;
-
-uniform sampler2D texture_id;
-uniform mat4 normal_mat;
-uniform vec4 line_color;
-
-void main (void) {
-    gl_FragColor = texture2D(texture_id, tex_coord0) * line_color;
-}
-"""
 
 
 def ignore_undertouch(func):
     def wrap(self, touch):
         glst = touch.grab_list
-        if len(glst) == 0 or (self is glst[ 0 ]()):
+        if len(glst) == 0 or (self is glst[0]()):
             return func(self, touch)
     return wrap
 
 
 class Renderer(Widget):
 
-    SCALE_FACTOR = 0.05
-    MAX_SCALE = 10.0
-    MIN_SCALE = 0.1
-    ROTATE_SPEED = 1.
-
     def __init__(self, app_root, scene, **kwargs):
+        EventLoop.ensure_window()  # Make sure OpenGL context exists
         self.app_root = app_root
         self.scene = scene
         self.canvas = RenderContext(compute_normal_mat=True)
-        self.canvas.shader.fs = fragment_shader_src
-        self.canvas.shader.vs = vertex_shader_src
-        self.container = None
-        self.container_land = None
-        self.meshes_onstage = set()
+        self.canvas.shader.source = resource_find('shader.glsl')
+        self.camera_distance_scale_factor = const.SCALE_INITIAL
+        self.camera_distance_to_center = const.CAMERA_DISTANCE_TO_CENTER_INITIAL
+        self.camera_angle_y = float(const.ROTATE_VERTICAL_INITIAL)
+        self.camera_angle_z = 180.0
+        self.camera_acceleration = 0.0
+        self.camera_speed = 0.0
+        self.camera_unit_lock = None
+        self.camera_capital_lock = 0
+        self.camera_move_mode = 1
+        self.global_eye_x = 0
+        self.global_eye_y = 0
+        self.global_eye_z = 0
+        self.global_center_x = 0
+        self.global_center_y = 0
+        self.global_center_z = 0
+        self.fog_center_x = 0.0
+        self.fog_center_y = 0.0
+        self.fog_center_z = 0.0
+        self.sky_background_rotate_x = None
+        self.sky_background_rotate_y = None
+        self.sky_background_rotate_z = None
+        self.sky_background_translate = None
+        self.sky_background_mesh = None
         self.touches = []
+        self.brightness = 0.0
+        self.contrast = 1.0
+        self.this_template_name = None
+        self.this_template_variant_index = None
+        self.this_template_variant_coefs_index = None
+        self.this_template_model_kind = 0
+        self.this_template_coefs = [0.0, 0.0, 0.0]
+        self.this_template_scale = [1.0, 1.0, 1.0]
+        self.this_template_figure_index = 80
+        self.this_template_figure_part_index = 0
+        self.this_animation_frame = None
         super(Renderer, self).__init__(**kwargs)
         with self.canvas:
-            self.cb = Callback(self.setup_gl_context)
+            self.cb = Callback(self.on_setup_gl_context)
             PushMatrix()
-            self.setup_scene()
+            self.create_sky_background()
+            self.scene.create_container()
             PopMatrix()
-            self.cb = Callback(self.reset_gl_context)
+            self.cb = Callback(self.on_reset_gl_context)
         self.canvas['texture_id'] = 1
-        Clock.schedule_interval(self.update_glsl, 1 / 60)
-        Clock.schedule_interval(self.update_animations, 1 / 25)
-        self._keyboard = Window.request_keyboard(self._keyboard_closed, self)
-        self._keyboard.bind(on_key_down=self._on_keyboard_down)
+        self.keyboard_handler = Window.request_keyboard(self.on_keyboard_closed, self)
+        self.keyboard_handler.bind(on_key_down=self.on_keyboard_down)
+        self.keyboard_handler.bind(on_key_up=self.on_keyboard_up)
+        Clock.schedule_interval(self.on_update_glsl, 1 / 60)
+        Clock.schedule_interval(self.on_update_animations, 0.055 )  # 1 / 24)
+        Clock.schedule_interval(self.on_run_units, 1 / 60)
 
-    def _keyboard_closed(self):
-        self._keyboard.unbind(on_key_down=self._on_keyboard_down)
-        self._keyboard = None
+    def create_sky_background(self):
+        PushMatrix()
+        sz_w = const.CAMERA_VIEW_CLIP_FAR * 2.0
+        sz_h = const.CAMERA_VIEW_CLIP_FAR * 0.8
+        shift_down = const.CAMERA_VIEW_CLIP_FAR * 0.3
+        self.sky_background_rotate_z = Rotate(0, 0, 0, 1, group='land')
+        self.sky_background_rotate_y = Rotate(0, 0, 1, 0, group='land')
+        self.sky_background_rotate_x = Rotate(0, 1, 0, 0, group='land')
+        self.sky_background_translate = Translate(0, 0, 0, group='land')
+        ChangeState(material_density=1.0)
+        sky_background_image = Image(source=res.data_path('assets/ski1.png'))
+        sky_background_texture = sky_background_image.texture
+        sky_background_texture.wrap = 'repeat'
+        BindTexture(texture=sky_background_texture, index=1)
+        self.sky_background_mesh = Mesh(
+            vertices=[
+                -1 * sz_w / 2,  sz_h - shift_down, 0, 1, 0, 0, 0.0, 1.0,
+                1 * sz_w / 2,   sz_h - shift_down, 0, 1, 0, 0, 1.0, 1.0,
+                1 * sz_w / 2,   - shift_down,      0, 1, 0, 0, 1.0, 0.0,
+                - 1 * sz_w / 2, - shift_down,      0, 1, 0, 0, 0.0, 0.0,               
+            ],
+            indices=[0, 1, 2, 0, 2, 3],
+            fmt=[(b'v_pos', 3, 'float'), (b'v_normal', 3, 'float'), (b'v_tex_coord', 2, 'float')],
+            mode='triangles',
+        )
+        ChangeState(material_density=0.0)
+        PopMatrix()
 
-    def _on_keyboard_down(self, keyboard, keycode, text, modifiers):
+    def update_sky_background(self):
+        sz_w = const.CAMERA_VIEW_CLIP_FAR * 2.0
+        sz_h = const.CAMERA_VIEW_CLIP_FAR * 1.0
+        shift_down = const.CAMERA_VIEW_CLIP_FAR * 0.5
+        parallax_vertical = (self.camera_angle_y + 105.0) / 95.0
+        parallax_horizontal = self.camera_angle_z / 90.0
+        self.sky_background_mesh.vertices = [
+            -1 * sz_w / 2,  sz_h - shift_down, 0, 1, 0, 0, 0.0 + parallax_horizontal, 0.0 - parallax_vertical,
+            1 * sz_w / 2,   sz_h - shift_down, 0, 1, 0, 0, 1.0 + parallax_horizontal, 0.0 - parallax_vertical,
+            1 * sz_w / 2,   - shift_down,      0, 1, 0, 0, 1.0 + parallax_horizontal, 1.0 - parallax_vertical,
+            - 1 * sz_w / 2, - shift_down,      0, 1, 0, 0, 0.0 + parallax_horizontal, 1.0 - parallax_vertical,
+        ]
+        self.sky_background_rotate_x.angle = 90 - self.camera_angle_y
+        self.sky_background_rotate_y.angle = 180 + self.camera_angle_z
+        self.sky_background_translate.z = const.CAMERA_VIEW_CLIP_FAR - 0.5 - self.camera_distance_scale_factor * self.camera_distance_to_center
+
+    def update_canvas(self):
+        win_w, win_h = Window.size
+        asp = win_w / float(win_h)
+        # if _Debug:
+        #     print(f'Renderer.update_canvas: win_w={win_w} win_h={win_h} asp={asp} win={Window.size} renderer={self.size}')
+        if asp > 2.0:
+            asp = 2.0
+        if asp < 0.5:
+            asp = 0.5
+        # self.on_gl_error('step 1')
+        # self.canvas['texture_id'] = 1
+        self.global_eye_x = float(self.camera_distance_scale_factor) * self.camera_distance_to_center * math.sin(math.radians(self.camera_angle_y)) * math.sin(math.radians(self.camera_angle_z))
+        self.global_eye_y = float(self.camera_distance_scale_factor) * self.camera_distance_to_center * math.cos(math.radians(self.camera_angle_y))
+        self.global_eye_z = float(self.camera_distance_scale_factor) * self.camera_distance_to_center * math.sin(math.radians(self.camera_angle_y)) * math.cos(math.radians(self.camera_angle_z))
+        self.update_sky_background()
+        self.canvas['projection_mat'] = Matrix().view_clip(-asp, asp, -1, 1, const.CAMERA_VIEW_CLIP_NEAR, const.CAMERA_VIEW_CLIP_FAR, 1)
+        self.canvas['modelview_mat'] = Matrix().look_at(
+            self.global_eye_x, self.global_eye_y, self.global_eye_z,
+            self.global_center_x, self.global_center_y, self.global_center_z,
+            0, 1, 0,  # up vector
+        )
+        self.canvas['center_point'] = (0.0, 0.0, - float(self.camera_distance_scale_factor) * float(self.camera_distance_to_center))
+        # if _Debug:
+        #     print(f'updating canvas center_point={self.canvas["center_point"]} asp={asp}')
+        self.canvas['brightness'] = self.brightness
+        self.canvas['contrast'] = self.contrast
+        self.canvas['fog_density'] = 0.08
+        self.canvas['fog_radius'] = (const.VISIBLE_AREA_SIZE_SEGMENTS_HALF - 3) * const.SEGMENT_SIZE
+        self.canvas['material_density'] = 0.0
+        self.canvas['water_transparency'] = 10.0 / 255.0
+        # self.on_gl_error('step 2')
+
+    def define_rotate_angle(self, touch):
+        x_angle = (float(touch.dx) / float(self.width)) * 360.0 * const.ROTATE_SPEED
+        y_angle = -1.0 * (float(touch.dy) / float(self.height)) * 360.0 * const.ROTATE_SPEED
+        return x_angle, y_angle
+
+    def on_keyboard_closed(self):
+        self.keyboard_handler.unbind(on_key_down=self.on_keyboard_down)
+        self.keyboard_handler = None
+
+    def _show_unit(self, template_data, scale=[1.0, 1.0, 1.0], coefs_index=None):
+        if coefs_index is None:
+            coefs_index = self.this_template_variant_coefs_index
+        animated_units_onstage = []
+        for unit in self.scene.units.values():
+            if unit.static:
+                continue
+            animated_units_onstage.append(unit.name)
+        for name in animated_units_onstage:
+            self.scene.remove_unit_from_stage(container=self.scene.container_animated_objects, unit_name=name)
+        self.scene.meshes_index.clear()
+        coefs = [float(c) for c in (template_data['c'].split(' ')[coefs_index]).split(':')]
+        unit = self.scene.place_animated_unit_on_land(
+            template=template_data['m'],
+            map_w=self.scene.area_center_w,
+            map_h=self.scene.area_center_h,
+            shift_w=0.5,
+            shift_h=0.5,
+            direction=0, # random.randint(0, 360),
+            elevation_correction=-5.0,
+            selected_parts=template_data['p'] if template_data['p'] else None,
+            selected_animations='*',
+            textures={'*': template_data['t'].lower()},
+            coefs=coefs,
+            scale=scale,
+        )
+        if not unit:
+            return
+        unit.max_speed = 0 # random.randint(1, 50) / 1000.0
+        unit.acceleration = 0 # random.randint(1, 5) / 1000.0
+        if _Debug:
+            d = template_data.copy()
+            print(f'    showing template {template_data["m"]} with {len(unit.parts)} parts coefs={coefs} scale={scale}:\n    {d}')
+
+    def on_keyboard_up(self, keyboard, keycode, *largs):
+        self.camera_speed = 0.0
+        self.camera_acceleration = 0.0
+        if keycode[1] in ['w', 's', ]:
+            if self.scene.hero:
+                self.scene.hero.move(forward=False, backward=False)
+    
+    def on_keyboard_down(self, keyboard, keycode, text, modifiers):
         if keycode[1] == 'escape':
             App.get_running_app().stop()
-        elif keycode[1] == 'z':
-            for u in self.scene.units.values():
-                if not u.onstage:
-                    continue
-                current_animation_ind = u.animations_loaded.index(u.animation_playing)
-                current_animation_ind += 1
-                if current_animation_ind >= len(u.animations_loaded):
-                    current_animation_ind = 0
-                u.animation_playing = u.animations_loaded[current_animation_ind]
-                u.animation_frame = 0
-                if _Debug:
-                    print(f'playing animation {u.animation_playing} for ({u.name})')
-                break
+        # elif keycode[1] == 'u':
+        #     # self.contrast += 0.1
+        #     # self.this_template_coefs[0] += 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[0] += 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
+        # elif keycode[1] == 'i':
+        #     # self.contrast -= 0.1
+        #     # self.this_template_coefs[0] -= 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[0] -= 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
+        # elif keycode[1] == 'o':
+        #     # self.brightness += 0.1
+        #     # self.this_template_coefs[1] += 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[1] += 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
+        # elif keycode[1] == 'p':
+        #     # self.brightness -= 0.1
+        #     # self.this_template_coefs[1] -= 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[1] -= 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
+        # elif keycode[1] == 'l':
+        #     # self.this_template_coefs[2] += 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[2] += 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
+        # elif keycode[1] == 'k':
+        #     # self.this_template_coefs[2] -= 0.1
+        #     template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+        #     # template_data['c'] = ':'.join(map(str, self.this_template_coefs))
+        #     self.this_template_variant_coefs_index = 0
+        #     self.this_template_scale[2] -= 0.1
+        #     self._show_unit(template_data, scale=self.this_template_scale)
         elif keycode[1] == 'x':
-            for u in self.scene.units.values():
-                if not u.onstage:
+            self.this_animation_frame = None
+            for unit in self.scene.units.values():
+                if not unit.animations_list:
                     continue
-                current_animation_ind = u.animations_loaded.index(u.animation_playing)
+                current_animation_ind = unit.animations_list.index(unit.animation_playing)
+                current_animation_ind += 1
+                if current_animation_ind >= len(unit.animations_list):
+                    current_animation_ind = 0
+                unit.animation_playing = unit.animations_list[current_animation_ind]
+                unit.animation_frame = 0
+                unit.animation_next = None
+                ao = self.scene.animated_objects[unit.object_name]
+                animation = ao.animations[unit.animation_playing]
+                root_part_name = ao.parts[0]
+                root_part_animation = animation.parts.get(root_part_name)
+                unit.animation_length = root_part_animation.frames
+                if _Debug:
+                    print(f'playing animation {unit.animation_playing} for unit {unit.name}')
+        elif keycode[1] == 'z':
+            self.this_animation_frame = None
+            for unit in self.scene.units.values():
+                if not unit.animations_list:
+                    continue
+                current_animation_ind = unit.animations_list.index(unit.animation_playing)
                 current_animation_ind -= 1
                 if current_animation_ind < 0:
-                    current_animation_ind = len(u.animations_loaded) - 1
-                u.animation_playing = u.animations_loaded[current_animation_ind]
-                u.animation_frame = 0
+                    current_animation_ind = len(unit.animations_list) - 1
+                unit.animation_playing = unit.animations_list[current_animation_ind]
+                unit.animation_frame = 0
+                unit.animation_next = None
+                ao = self.scene.animated_objects[unit.object_name]
+                animation = ao.animations[unit.animation_playing]
+                root_part_name = ao.parts[0]
+                root_part_animation = animation.parts.get(root_part_name)
+                unit.animation_length = root_part_animation.frames
                 if _Debug:
-                    print(f'playing animation {u.animation_playing} for ({u.name})')
-                break
-        elif keycode[1] == 'c':
-            units_onstage = []
+                    print(f'playing animation {unit.animation_playing} for unit {unit.name}')
+        elif keycode[1] == 'p':
+            if self.this_animation_frame is None:
+                self.this_animation_frame = 0
+            else:
+                self.this_animation_frame += 1
+                if self.this_animation_frame >= 1000000:
+                    self.this_animation_frame = 0
             for unit in self.scene.units.values():
-                if unit.onstage:
-                    units_onstage.append(unit.name)
-            for name in units_onstage:
-                self.remove_unit(name)
-            self.app_root.test_id += 1
-            if self.app_root.test_id > 3:
-                self.app_root.test_id = 1
-            unit = self.app_root.prepare_test_unit(scene=self.scene, test=self.app_root.test_id)
-            if unit and not unit.onstage:
-                self.add_unit(name)
+                if not unit.animations_list:
+                    continue
+                ao = self.scene.animated_objects[unit.object_name]
+                animation = ao.animations[unit.animation_playing]
+                root_part_name = ao.parts[0]
+                root_part_animation = animation.parts.get(root_part_name)
+                unit.animation_length = root_part_animation.frames
+                unit.animation_frame = self.this_animation_frame % unit.animation_length
+                if _Debug:
+                    print(f'playing animation {unit.animation_playing} for unit {unit.name} at frame {unit.animation_frame}')
+                if not unit.static and unit.onstage:
+                    unit.animate(self.scene, 0.1)
+        elif keycode[1] == 'r':
+            if self.this_template_name is None:
+                self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+            else:
+                current_index = sorted(self.app_root.known_templates.keys()).index(self.this_template_name)
+                template_name = None
+                while True:
+                    current_index += 1
+                    if current_index >= len(self.app_root.known_templates):
+                        current_index = 0
+                    template_name = sorted(self.app_root.known_templates.keys())[current_index]
+                    template_data = self.app_root.known_templates[template_name][0]
+                    if self.this_template_model_kind == 0:
+                        break
+                    if self.this_template_model_kind == 1:
+                        if template_data['k'] in ['house', 'building', 'bridge', 'gate', 'wall', 'ruins']:
+                            break
+                    if self.this_template_model_kind == 2:
+                        if template_data['t'].count('tree'):
+                            break
+                self.this_template_name = template_name
+                # current_index += 1
+                # if current_index >= len(self.app_root.known_templates):
+                #     current_index = 0
+                # self.this_template_name = sorted(self.app_root.known_templates.keys())[current_index]
+            self.this_template_variant_index = 0
+            self.this_template_coefs = [0.0, 0.0, 0.0]
+            # null_variant_index = 0
+            # while True:
+            #     template_data = self.app_root.known_templates[self.this_template_name][null_variant_index]
+            #     if template_data['p'] is None or template_data['i'].endswith('null'):
+            #         break
+            #     null_variant_index += 1
+            #     if null_variant_index >= len(self.app_root.known_templates[self.this_template_name]):
+            #         null_variant_index = 0
+            #         break
+            self.this_template_variant_coefs_index = 0  # null_variant_index
+            template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            self._show_unit(template_data)
+        elif keycode[1] == 'f':
+            if self.this_template_name is None:
+                self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+            else:
+                current_index = sorted(self.app_root.known_templates.keys()).index(self.this_template_name)
+                current_index -= 1
+                if current_index < 0:
+                    current_index = len(self.app_root.known_templates) - 1
+                self.this_template_name = sorted(self.app_root.known_templates.keys())[current_index]
+            self.this_template_variant_index = 0
+            self.this_template_variant_coefs_index = 0
+            self.this_template_coefs = [0.0, 0.0, 0.0]
+            template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            self._show_unit(template_data)
+        elif keycode[1] == 't':
+            if self.this_template_name is None:
+                self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+                self.this_template_variant_index = 0
+            if self.this_template_variant_index is None:
+                self.this_template_variant_index = 0
+            else:
+                self.this_template_variant_index += 1
+            if self.this_template_variant_index >= len(self.app_root.known_templates[self.this_template_name]):
+                self.this_template_variant_index = 0
+            self.this_template_variant_coefs_index = 0
+            animated_units_onstage = []
+            for unit in self.scene.units.values():
+                if unit.static:
+                    continue
+                animated_units_onstage.append(unit.name)
+            for name in animated_units_onstage:
+                self.scene.remove_unit_from_stage(container=self.scene.container_animated_objects, unit_name=name)
+            template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            self._show_unit(template_data)
+        elif keycode[1] == 'g':
+            if self.this_template_name is None:
+                self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+                self.this_template_variant_index = 0
+            if self.this_template_variant_index is None:
+                self.this_template_variant_index = 0
+            else:
+                self.this_template_variant_index -= 1
+                if self.this_template_variant_index < 0:
+                    self.this_template_variant_index = len(self.app_root.known_templates[self.this_template_name]) - 1
+            if self.this_template_variant_index >= len(self.app_root.known_templates[self.this_template_name]):
+                self.this_template_variant_index = 0
+            self.this_template_variant_coefs_index = 0
+            template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            self._show_unit(template_data)
+        elif keycode[1] == 'y':
+            return True
+            self.this_template_figure_index += 1
+            if self.this_template_figure_index >= len(self.app_root.known_figures_parts):
+                self.this_template_figure_index = 0
+            print(f'next figure index is {self.this_template_figure_index}')
+            self.this_template_figure_part_index = 0
+            model_name, tex_name, parts_list = self.app_root.known_figures_parts[self.this_template_figure_index].split('#')
+            parts_list = parts_list.split(':')
+            parts_list_out = parts_list[self.this_template_figure_part_index]
+            template_data = {
+                'i': f'{model_name}#{tex_name}#{parts_list_out}',
+                'm': model_name,
+                't': tex_name,
+                'p': [parts_list_out, ],
+                'c': '0.0:0.0:0.0',
+                's': '1.0:1.0:1.0',
+            }
+            try:
+                self._show_unit(template_data, coefs_index=0)
+            except:
+                import traceback
+                traceback.print_exc()
+            # if self.this_template_name is None:
+            #     self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+            #     self.this_template_variant_index = 0
+            # if self.this_template_variant_index is None:
+            #     self.this_template_variant_index = 0
+            #     self.this_template_variant_coefs_index = 0
+            # if self.this_template_variant_coefs_index is None:
+            #     self.this_template_variant_coefs_index = 0
+            # else:
+            #     self.this_template_variant_coefs_index += 1
+            # template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            # if self.this_template_variant_coefs_index >= len(template_data['c'].split(' ')):
+            #     self.this_template_variant_coefs_index = 0
+            # self._show_unit(template_data)
+        elif keycode[1] == 'h':
+            return True
+            self.this_template_figure_index -= 1
+            if self.this_template_figure_index < 0:
+                self.this_template_figure_index = len(self.app_root.known_figures_parts) - 1
+            self.this_template_figure_part_index = 0
+            model_name, tex_name, parts_list = self.app_root.known_figures_parts[self.this_template_figure_index].split('#')
+            parts_list = parts_list.split(':')
+            parts_list_out = parts_list[self.this_template_figure_part_index]
+            template_data = {
+                'i': f'{model_name}#{tex_name}#{parts_list_out}',
+                'm': model_name,
+                't': tex_name,
+                'p': [parts_list_out, ],
+                'c': '0.0:0.0:0.0',
+                's': '1.0:1.0:1.0',
+            }
+            try:
+                self._show_unit(template_data, coefs_index=0)
+            except:
+                import traceback
+                traceback.print_exc()
+            # if self.this_template_name is None:
+            #     self.this_template_name = sorted(self.app_root.known_templates.keys())[0]
+            #     self.this_template_variant_index = 0
+            # if self.this_template_variant_index is None:
+            #     self.this_template_variant_index = 0
+            #     self.this_template_variant_coefs_index = 0
+            # if self.this_template_variant_coefs_index is None:
+            #     self.this_template_variant_coefs_index = 0
+            # else:
+            #     if self.this_template_variant_coefs_index > 0:
+            #         self.this_template_variant_coefs_index -= 1
+            # template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+            # self._show_unit(template_data)
+        elif keycode[1] == 'u':
+            return True
+            model_name, tex_name, parts_list = self.app_root.known_figures_parts[self.this_template_figure_index].split('#')
+            parts_list = parts_list.split(':')
+            self.this_template_figure_part_index += 1
+            if self.this_template_figure_part_index >= len(parts_list):
+                self.this_template_figure_part_index = 0
+            parts_list_out = [parts_list[self.this_template_figure_part_index], ]
+            # if self.this_template_figure_part_index != 0:
+            #     parts_list_out = [parts_list[0], ] + parts_list_out
+            template_data = {
+                'i': f'{model_name}#{tex_name}#{":".join(parts_list_out)}',
+                'm': model_name,
+                't': tex_name,
+                'p': parts_list_out,
+                'c': '0.0:0.0:0.0',
+                's': '1.0:1.0:1.0',
+            }
+            try:
+                self._show_unit(template_data, coefs_index=0)
+            except:
+                import traceback
+                traceback.print_exc()
+        elif keycode[1] == 'j':
+            return True
+            model_name, tex_name, parts_list = self.app_root.known_figures_parts[self.this_template_figure_index].split('#')
+            parts_list = parts_list.split(':')
+            self.this_template_figure_part_index -= 1
+            if self.this_template_figure_part_index < 0:
+                self.this_template_figure_part_index = len(parts_list) - 1
+            parts_list_out = [parts_list[self.this_template_figure_part_index], ]
+            # if self.this_template_figure_part_index != 0:
+            #     parts_list_out = [parts_list[0], ] + parts_list_out
+            template_data = {
+                'i': f'{model_name}#{tex_name}#{":".join(parts_list_out)}',
+                'm': model_name,
+                't': tex_name,
+                'p': parts_list_out,
+                'c': '0.0:0.0:0.0',
+                's': '1.0:1.0:1.0',
+            }
+            try:
+                self._show_unit(template_data, coefs_index=0)
+            except:
+                import traceback
+                traceback.print_exc()
+        elif keycode[1] == 'n':
+            if self.this_template_name:
+                template_data = self.app_root.known_templates[self.this_template_name][self.this_template_variant_index]
+                texture_name = template_data['t'].lower()
+                image_file_path = os.path.join('textures', 'model', texture_name+'.png')
+                if os.path.isfile(image_file_path):
+                    from PIL import Image as PILImage
+                    from PIL.Image import Transpose as PILTranspose
+                    image = PILImage.open(image_file_path)
+                    image.load()
+                    flipped_image = image.transpose(PILTranspose.FLIP_TOP_BOTTOM)
+                    flipped_image.save(image_file_path)
+                    if _Debug:
+                        print(f'Flipped image {image_file_path} vertically')
+                    file_path_source = resource_find(image_file_path)
+                    if file_path_source:
+                        _tex = Cache.get('kv.texture', image_file_path)
+                        if _tex:
+                            Cache.remove('kv.texture', image_file_path)
+                            if _Debug:
+                                print(f'Cleared cached texture for {image_file_path}')
+                            self._show_unit(template_data)
+        elif keycode[1] == 'm':
+            self.this_template_model_kind += 1
+            if self.this_template_model_kind > 2:
+                self.this_template_model_kind = 0
+            if _Debug:
+                print(f'model kind is now {self.this_template_model_kind}')
+        elif keycode[1] == 'b':
+            if self.camera_unit_lock:
+                self.camera_unit_lock = None
         elif keycode[1] == 'v':
-            units_onstage = []
+            animated_units_onstage = []
             for unit in self.scene.units.values():
-                if unit.onstage:
-                    units_onstage.append(unit.name)
-            for name in units_onstage:
-                self.remove_unit(name)
-            self.app_root.test_id -= 1
-            if self.app_root.test_id == 0:
-                self.app_root.test_id = 3
-            unit = self.app_root.prepare_test_unit(scene=self.scene, test=self.app_root.test_id)
-            if unit and not unit.onstage:
-                self.add_unit(name)
+                if unit.static:
+                    continue
+                animated_units_onstage.append(unit.name)
+            animated_units_onstage = sorted(animated_units_onstage)
+            if self.camera_unit_lock:
+                current_index = animated_units_onstage.index(self.camera_unit_lock)
+                current_index += 1
+                if current_index >= len(animated_units_onstage):
+                    current_index = 0
+                self.camera_unit_lock = animated_units_onstage[current_index]
+                if _Debug:
+                    print(f'camera locked to unit {self.camera_unit_lock}')
+            else:
+                if animated_units_onstage:
+                    self.camera_unit_lock = animated_units_onstage[0]
+        elif keycode[1] == 'c':
+            if self.camera_unit_lock:
+                self.camera_unit_lock = None
+            self.camera_capital_lock += 1
+            if self.camera_capital_lock > len(self.scene.land.capitals):
+                self.camera_capital_lock = 0
+                print('camera unlocked from capital')
+            else:
+                print(f'camera locked to capital {self.scene.land.capitals[self.camera_capital_lock]["n"]}')
+        elif keycode[1] == 'e':
+            self.camera_move_mode += 1
+            if self.camera_move_mode > 3:
+                self.camera_move_mode = 1
+        elif keycode[1] == 'a':
+            if self.camera_move_mode == 1:
+                if self.scene.hero:
+                    self.scene.hero.turn(left=True)
+            elif self.camera_move_mode == 2:
+                self.scene.land_shift(0, const.LAND_MOVE_SPEED)
+            elif self.camera_move_mode == 3:
+                self.scene.land_move(self.camera_angle_z + 90, const.LAND_MOVE_SPEED)
+        elif keycode[1] == 'd':
+            if self.camera_move_mode == 1:
+                if self.scene.hero:
+                    self.scene.hero.turn(right=True)
+            elif self.camera_move_mode == 2:
+                self.scene.land_shift(0, -const.LAND_MOVE_SPEED)
+            elif self.camera_move_mode == 3:
+                self.scene.land_move(self.camera_angle_z - 90, const.LAND_MOVE_SPEED)
+        elif keycode[1] == 's':
+            if self.camera_move_mode == 1:
+                if self.scene.hero:
+                    self.scene.hero.move(backward=True)
+            elif self.camera_move_mode == 2:
+                self.scene.land_shift(-const.LAND_MOVE_SPEED, 0)
+            elif self.camera_move_mode == 3:
+                self.camera_acceleration -= const.LAND_MOVE_SPEED / 20.0
+                self.camera_speed += self.camera_acceleration
+                if self.camera_speed < -const.LAND_MOVE_SPEED:
+                    self.camera_speed = -const.LAND_MOVE_SPEED
+                self.scene.land_move(self.camera_angle_z, self.camera_speed)
+                self.camera_acceleration = 0.0
+        elif keycode[1] == 'w':
+            if self.camera_move_mode == 1:
+                if self.scene.hero:
+                    self.scene.hero.move(forward=True)
+            elif self.camera_move_mode == 2:
+                self.scene.land_shift(const.LAND_MOVE_SPEED, 0)
+            elif self.camera_move_mode == 3:
+                self.camera_acceleration += const.LAND_MOVE_SPEED / 20.0
+                self.camera_speed += self.camera_acceleration
+                if self.camera_speed > const.LAND_MOVE_SPEED:
+                    self.camera_speed = const.LAND_MOVE_SPEED
+                self.scene.land_move(self.camera_angle_z, self.camera_speed)
+                self.camera_acceleration = 0.0
+        elif keycode[1] == 'o':
+            self.camera_unit_lock = None
+            u = self.scene.hero.get_unit()
+            coefs = u.coefs
+            coefs[2] += 0.1
+            self.scene.remove_unit_from_stage(container=self.scene.container_animated_objects, unit_name=u.name)
+            self.scene.meshes_index.clear()
+            self.scene.models.clear()
+            self.scene.hero.create_unit(u.w, u.h, coefs=coefs)
+        elif keycode[1] == 'i':
+            self.camera_unit_lock = None
+            u = self.scene.hero.get_unit()
+            coefs = u.coefs
+            coefs[2] -= 0.1
+            self.scene.remove_unit_from_stage(container=self.scene.container_animated_objects, unit_name=u.name)
+            self.scene.meshes_index.clear()
+            self.scene.models.clear()
+            self.scene.hero.create_unit(u.w, u.h, coefs=coefs)
         return True
 
     @ignore_undertouch
@@ -173,14 +671,19 @@ class Renderer(Widget):
         touch.grab(self)
         self.touches.append(touch)
         if 'button' in touch.profile and touch.button in ('scrollup', 'scrolldown'):
+            factor = self.camera_distance_scale_factor
             if touch.button == "scrolldown":
-                scale = self.SCALE_FACTOR
+                factor = factor * (1.0 - const.SCALE_SPEED_FACTOR)
             if touch.button == "scrollup":
-                scale = -self.SCALE_FACTOR
-            xyz = self.global_scale.xyz
-            scale = xyz[0] + scale
-            if scale < self.MAX_SCALE and scale > self.MIN_SCALE:
-                self.global_scale.xyz = (scale, scale, scale)
+                factor = factor * (1.0 + const.SCALE_SPEED_FACTOR)
+            if factor < const.SCALE_MIN:
+                factor = const.SCALE_MIN
+            if factor > const.SCALE_MAX:
+                factor = const.SCALE_MAX
+            if factor != self.camera_distance_scale_factor:
+                self.camera_distance_scale_factor = factor
+                # if _Debug:
+                #     print(f'new scale factor is {self.camera_distance_scale_factor}, camera distance to center is {float(self.camera_distance_scale_factor) * self.camera_distance_to_center}')
 
     @ignore_undertouch
     def on_touch_up(self, touch):
@@ -188,197 +691,37 @@ class Renderer(Widget):
         if touch in self.touches:
             self.touches.remove(touch)
 
-    def define_rotate_angle(self, touch):
-        x_angle = (touch.dx / self.width) * 360.0 * self.ROTATE_SPEED
-        y_angle = -1 * (touch.dy / self.height) * 360.0 * self.ROTATE_SPEED
-        return x_angle, y_angle
-
     @ignore_undertouch
     def on_touch_move(self, touch):
         if touch in self.touches and touch.grab_current == self:
             if len(self.touches) == 1:
                 ax, ay = self.define_rotate_angle(touch)
-                self.global_rotate_y.angle -= ax
-                self.global_rotate_x.angle -= ay
+                new_global_rotate_angle = self.camera_angle_y - ay
+                if new_global_rotate_angle < const.ROTATE_VERTICAL_MIN:
+                    new_global_rotate_angle = const.ROTATE_VERTICAL_MIN
+                if new_global_rotate_angle > const.ROTATE_VERTICAL_MAX:
+                    new_global_rotate_angle = const.ROTATE_VERTICAL_MAX
+                self.camera_angle_y = new_global_rotate_angle
+                self.camera_angle_z -= ax
+                if self.camera_angle_z > 360.0:
+                    self.camera_angle_z -= 360.0
+                if self.camera_angle_z < 0.0:
+                    self.camera_angle_z += 360.0
+                self.scene.on_camera_rotate(self.camera_angle_y, self.camera_angle_z)
+                # if _Debug:
+                #     print(f'new camera angle y:{self.camera_angle_y} z:{self.camera_angle_z}')
 
-    def add_land(self):
-        window_w = 20
-        window_h = 64
-        window_width = 32
-        window_height = 32
-        window_center_w = window_w + int(window_width / 2)
-        window_center_h = window_h + int(window_height / 2)
-        planet_radius = 150.0
-        elevation_factor = planet_radius / 5.0
-        cells_scale_factor = 20
-        width = window_width
-        height = window_height
-        # width = self.land.width
-        # height = self.land.height
-        width_half = int(width / 2.0)
-        height_half = int(height / 2.0)
-        _get_elevation = self.scene.land.get_elevation
-        elevation_at_center = _get_elevation(window_center_w, window_center_h)
-        # planed_shift_y = - planet_radius - elevation_at_00 * elevation_factor - elevation_factor / 12 - 1.0
-        planed_shift_y = - planet_radius - elevation_at_center * elevation_factor
-        planet_xyz = [0.0, planed_shift_y, 0.0]
-        w2f = float(width / 2)
-        h2f = float(height / 2)
-        width_f = float(width)
-        height_f = float(height)
-        planet_width = float(width * cells_scale_factor)
-        planet_height = float(height * cells_scale_factor)
-        self.container_land.add(PushMatrix(group='land'))
-        self.container_land.add(Translate(planet_xyz[0], planet_xyz[1], planet_xyz[2]))
-        # self.container_land.add(PushMatrix(group='land'))
-        for _w in range(0, window_width - 1):
-            for _h in range(0, window_height - 1):
-                w = _w
-                h = _h
-        # for _w in range(0, width - 1):
-        #     for _h in range(0, height - 1):
-                # w = _w
-                # h = _h
-                w_f = float(_w)
-                h_f = float(_h)
-                e00 = _get_elevation(window_w + w, window_h + h)
-                e01 = _get_elevation(window_w + w, window_h + h + 1)
-                e10 = _get_elevation(window_w + w + 1, window_h + h)
-                e11 = _get_elevation(window_w + w + 1, window_h + h + 1)
-                # e00 = self.land.get_elevation(w, h)
-                # e01 = self.land.get_elevation(w, h+1)
-                # e10 = self.land.get_elevation(w+1, h)
-                # e11 = self.land.get_elevation(w+1, h+1)
-                if 0 in (e00, e01, e10, e11):
-                    # TODO: pain water
-                    continue
-                w00 = w_f - w2f
-                h00 = h_f - h2f
-                w01 = w_f - w2f
-                h01 = h_f + 1.0 - h2f
-                w10 = w_f + 1.0 - w2f
-                h10 = h_f - h2f
-                w11 = w_f + 1.0 - w2f
-                h11 = h_f + 1.0 - h2f
-                v00 = mth.wh2xyz(w00, h00, planet_width, planet_height, radius=planet_radius+e00*elevation_factor)
-                v01 = mth.wh2xyz(w01, h01, planet_width, planet_height, radius=planet_radius+e01*elevation_factor)
-                v10 = mth.wh2xyz(w10, h10, planet_width, planet_height, radius=planet_radius+e10*elevation_factor)
-                v11 = mth.wh2xyz(w11, h11, planet_width, planet_height, radius=planet_radius+e11*elevation_factor)
-                vert = [
-                    v00[0], v00[1], v00[2], 1, 0, 0, w / width_f, h / height_f,
-                    v01[0], v01[1], v01[2], 1, 0, 0, w / width_f, (h + 1.0) / height_f,
-                    v10[0], v10[1], v10[2], 1, 0, 0, (w + 1.0) / width_f, h / height_f,
-                    v11[0], v11[1], v11[2], 1, 0, 0, (w + 1.0) / width_f, (h + 1.0) / height_f,
-                ]
-                ind = [0, 1, 2, 1, 2, 3]
-                self.container_land.add(BindTexture(source='land.png', index=1, group='land'))
-                self.container_land.add(Mesh(
-                    vertices=vert,
-                    indices=ind,
-                    fmt=[(b'v_pos', 3, 'float'), (b'v_normal', 3, 'float'), (b'v_tex_coord', 2, 'float')],
-                    mode='triangles',
-                    group='land',
-                ))
-        # self.container_land.add(PopMatrix(group='land'))
-        self.container_land.add(Translate(-planet_xyz[0], -planet_xyz[1], -planet_xyz[2]))
-        self.container_land.add(PopMatrix(group='land'))
-
-    def add_mesh(self, name):
-        # NOT TO BE USED
-        if not self.container:
-            raise Exception('Container was not ready')
-        if name not in self.scene.meshes:
-            raise Exception(f'Mesh {name} does not exist')
-        mesh = self.scene.meshes.get(name)
-        self.container.add(PushMatrix(group=mesh.name))
-        self.container.add(BindTexture(source=mesh.material['map_Kd'], index=1, group=mesh.name))
-        self.container.add(Mesh(
-            vertices=mesh.vertices,
-            indices=mesh.indices,
-            fmt=[(b'v_pos', 3, 'float'), (b'v_normal', 3, 'float'), (b'v_tex_coord', 2, 'float')],
-            mode='triangles',
-            group=mesh.name,
-        ))
-        self.container.add(PopMatrix(group=mesh.name))
-        self.meshes_onstage.add(name)
-        mesh.onstage = True
-        if _Debug:
-            print(f'added mesh <{name}> on scene with {len(mesh.vertices)} vertices and {len(mesh.indices)} indices')
-
-    def remove_mesh(self, name):
-        # NOT TO BE USED
-        if not self.container:
-            raise Exception('Container was not ready')
-        if name not in self.scene.meshes:
-            raise Exception(f'Mesh {name} does not exist')
-        mesh = self.scene.meshes[name]
-        self.container.remove_group(name)
-        self.meshes_onstage.remove(name)
-        mesh.onstage = False
-        if _Debug:
-            print(f'removed mesh <{name}> from scene')
-
-    def add_unit(self, name):
-        if not self.container:
-            raise Exception('Container was not ready')
-        if name not in self.scene.units:
-            raise Exception(f'Unit {name} does not exist')
-        unit = self.scene.units[name]
-
-        def _visitor(part_name, parent_part_name):
-            mesh = unit.meshes.get(part_name)
-            self.container.add(PushMatrix(group=mesh.name))
-            mesh.part_translate = Transform(group=mesh.name)
-            self.container.add(mesh.part_translate)
-            self.container.add(PushMatrix(group=mesh.name))
-            mesh.part_rotate = Transform(group=mesh.name)
-            self.container.add(mesh.part_rotate)
-            # TODO: check if we can pass texture data directly to Mesh instruction as a parameter
-            self.container.add(BindTexture(source=mesh.material['map_Kd'], index=1, group=mesh.name))
-            self.container.add(Mesh(
-                vertices=mesh.vertices,
-                indices=mesh.indices,
-                fmt=[(b'v_pos', 3, 'float'), (b'v_normal', 3, 'float'), (b'v_tex_coord', 2, 'float')],
-                mode='triangles',
-                group=mesh.name,
-                # texture=<already loaded Texture>,
-            ))
-            self.container.add(PopMatrix(group=mesh.name))  # part_rotate
-            self.container.add(PopMatrix(group=mesh.name))  # part_translate
-            self.meshes_onstage.add(mesh.name)
-            mesh.onstage = True
-
-        self.container.add(PushMatrix(group=unit.name))  # unit
-        unit.walk_parts_ordered(_visitor)
-        self.container.add(PopMatrix(group=unit.name))  # unit
-        unit.onstage = True
-        if _Debug:
-            print(f'added unit ({unit.name}) on scene')
-
-    def remove_unit(self, name):
-        if not self.container:
-            raise Exception('Container was not ready')
-        if name not in self.scene.units:
-            raise Exception(f'Unit {name} does not exist')
-        unit = self.scene.units[name]
-        unit.onstage = False
-        for mesh in unit.meshes.values():
-            mesh.onstage = False
-            self.container.remove_group(mesh.name)
-            mesh.part_rotate = None
-            mesh.part_translate = None
-            self.meshes_onstage.remove(mesh.name)
-        self.container.remove_group(unit.name)
-        if _Debug:
-            print(f'removed mesh unit ({unit.name}) from scene')
-
-    def setup_gl_context(self, *args):
+    def on_setup_gl_context(self, *args):
         glEnable(GL_DEPTH_TEST)
+        # glDepthFunc(GL_LEQUAL)
+        # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        # glEnable(GL_BLEND)
 
-    def reset_gl_context(self, *args):
+    def on_reset_gl_context(self, *args):
+        # glDisable(GL_BLEND)
         glDisable(GL_DEPTH_TEST)
 
-    def gl_error(self, text='', kill=True):
+    def on_gl_error(self, text='', kill=True):
         err = glGetError()
         if not err:
             return 
@@ -389,97 +732,28 @@ class Renderer(Widget):
         if kill == True:
             sys.exit(0)
 
-    def update_glsl(self, delta):
-        asp = self.width / float(self.height)
-        self.gl_error('step 1')
-        self.canvas['texture_id'] = 1
-        self.canvas['projection_mat'] = Matrix().view_clip(-asp, asp, -1, 1, 1, 100, 1)
-        self.canvas['modelview_mat'] = Matrix().look_at(0, 0, -5, 0, 0, 0, 0, 1, 0)
-        self.canvas['diffuse_light'] = (1.0, 1.0, 1.0)
-        self.canvas['ambient_light'] = (0.1, 0.1, 0.1)
-        self.gl_error('step 2')
+    def on_update_glsl(self, delta):
+        self.update_canvas()
 
-    def update_animations(self, delta):
+    def on_update_animations(self, delta):
+        if self.this_animation_frame is not None:
+            return
         # TODO: maintain separate list of active animations for all units
         # then it is not required to loop all units
         for unit in self.scene.units.values():
-            if not unit.onstage:
-                continue
-            if not unit.animation_playing:
-                continue
-            a = unit.animations[unit.animation_playing]
-            root_part_name = unit.parts[0]
-            root_part_animation = a.parts.get(root_part_name)
-            if unit.animation_frame >= root_part_animation.frames:
-                if _Debug:
-                    print(f'restarting unit ({unit.name}) animation {unit.animation_playing} after frame {unit.animation_frame}')
-                unit.animation_frame = 0
-            f = unit.animation_frame
-            for part_name in unit.parts:
-                if part_name not in a.parts:
-                    continue
-                part_animation = a.parts.get(part_name)
-                if not part_animation:
-                    continue
-                q = part_animation.rotation_frames[f]
-                t = part_animation.translation_frames[f]
-                mesh = unit.meshes[part_name]
-                translate_mat = Matrix()
-                translate_mat.translate(t[0], t[1], t[2])
-                mesh.part_translate.matrix = translate_mat
-                rotate_mat = Matrix()
-                rotate_mat.set(array=mth.quaternion_to_matrix(q[0], q[1], q[2], q[3]))
-                mesh.part_rotate.matrix = rotate_mat.inverse()
-            unit.animation_frame += 1
+            if not unit.static and unit.onstage:
+                unit.animate(self.scene, delta)
 
-    def setup_scene(self):
-        PushMatrix()
-        self.global_translate = Translate(0, 0, 0)
-        self.global_rotate_x = Rotate(0, 1, 0, 0)
-        self.global_rotate_y = Rotate(0, 0, 1, 0)
-        self.global_scale = Scale(0.5)
-        sz = 1
-        PushState()
-        ChangeState(line_color=(0.5, 0.5, 0.5, 1.))
-        Mesh(
-            vertices=[
-                -1 * sz, -1 * sz, -1 * sz,
-                -1 * sz, -1 * sz, 1 * sz,
-                -1 * sz, 1 * sz, 1 * sz,
-                -1 * sz, 1 * sz, -1 * sz,
-                1 * sz, -1 * sz, -1 * sz,
-                1 * sz, -1 * sz, 1 * sz,
-                1 * sz, 1 * sz, 1 * sz,
-                1 * sz, 1 * sz, -1 * sz,
-            ],
-            indices=[0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7],
-            fmt=[(b'v_pos', 3, 'float'), ],
-            mode='lines',
-        )
-        ChangeState(line_color=(1., 0., 0., 1.))
-        Mesh(
-            vertices=[1 * sz, 0, 0, 0, 0, 0],
-            indices=[0, 1],
-            fmt=[(b'v_pos', 3, 'float'), ],
-            mode='lines',
-        )
-        ChangeState(line_color=(0., 1., 0., 1.))
-        Mesh(
-            vertices=[0, 1 * sz, 0, 0, 0, 0],
-            indices=[0, 1],
-            fmt=[(b'v_pos', 3, 'float'), ],
-            mode='lines',
-        )
-        ChangeState(line_color=(0., 0., 1., 1.))
-        Mesh(
-            vertices=[0, 0, 1 * sz, 0, 0, 0],
-            indices=[0, 1],
-            fmt=[(b'v_pos', 3, 'float'), ],
-            mode='lines',
-        )
-        ChangeState(line_color=(1.,1.,1.,1.))
-        PopState()
-        Color(1, 1, 1)
-        self.container_land = InstructionGroup()
-        self.container = InstructionGroup()
-        PopMatrix()
+    def on_run_units(self, delta):
+        if self.camera_unit_lock:
+            u = self.scene.units.get(self.camera_unit_lock)
+            if u:
+                self.scene.update_land(new_position=(u.w, u.h, u.shift_w, u.shift_h))
+        elif self.camera_capital_lock > 0:
+            capital = self.scene.land.capitals.get(self.camera_capital_lock, None)
+            if capital:
+                if self.scene.area_center_w != capital['x'] or self.scene.area_center_h != capital['y']:
+                    self.scene.update_land(new_position=(capital['x'], capital['y'], 0, 0))
+        for unit in self.scene.units.values():
+            if not unit.static:
+                unit.run(self.scene)

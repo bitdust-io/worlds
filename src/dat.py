@@ -1,10 +1,15 @@
 import os
+import sys
 import json
-import time
+import traceback
+import pprint
 import numpy as np
 
 from kivy.core.image import Image
+from kivy.cache import Cache
+from kivy.resources import resource_find
 
+import const
 import res
 import mth
 
@@ -12,25 +17,31 @@ import mth
 _Debug = True
 
 
-_NextUnitID = 0
-_NextMeshID = 0
-
-
 class MeshData(object):
 
     def __init__(self, **kwargs):
         self.name = kwargs.get("name")
-        self.unit_name = None
-        self.unit_part_name = None
-        self.onstage = False
+        self.object_name = None
+        self.object_part_name = None
+        self.coefs = [0, 0, 0]
+        self.center = []
+        self.min = []
+        self.max = []
+        self.radius = []
         self.vertices = []
         self.indices = []
         self.material = kwargs.get('material', None)
+        self.texture = kwargs.get('texture', {})
+
+
+class MeshTransformData(object):
+
+    def __init__(self):
         self.part_translate = None
-        self.part_animate = None
+        self.part_rotate = None
 
 
-class UnitPartAnimationData(object):
+class ObjectPartAnimationData(object):
 
     def __init__(self):
         self.frames = 0
@@ -42,7 +53,7 @@ class UnitPartAnimationData(object):
         self.morphing_frames = []
 
     def duplicate(self):
-        d = UnitPartAnimationData()
+        d = ObjectPartAnimationData()
         d.frames = self.frames
         d.rotation_frames_input = self.rotation_frames_input.copy()
         d.translation_frames_input = self.translation_frames_input.copy()
@@ -53,7 +64,7 @@ class UnitPartAnimationData(object):
         return d
 
 
-class UnitAnimationData(object):
+class ObjectAnimationData(object):
 
     def __init__(self, template, animation):
         self.template = template
@@ -61,45 +72,46 @@ class UnitAnimationData(object):
         self.parts = {}
 
 
-class UnitData(object):
+class ObjectData(object):
 
-    def __init__(self):
-        self.name = None
+    def __init__(self, name, static=True):
+        self.name = name
+        self.static = static
         self.template = None
         self.meshes = {}
         self.parts = []
-        self.parts_tree = {}
+        # self.parts_tree = {}
         self.parts_tree_ordered = []
         self.bones = {}
-        self.parts_parents = {}
+        # self.parts_parents = {}
         self.textures = {}
+        self.root_part_name = None
+        self.root_mesh_name = None
+        self.root_mesh_center = None
         self.animations = {}
         self.animations_loaded = []
-        self.animation_playing = None
-        self.animation_frame = 0
-        self.onstage = False
 
-    def list_parents(self, part_name):
-        if part_name not in self.parts_parents:
-            return []
-        parents = []
-        current_part = part_name
-        while current_part and current_part in self.parts_parents:
-            next_parent = self.parts_parents[current_part]
-            if next_parent:
-                parents.insert(0, next_parent)
-            current_part = next_parent
-        return parents
+    # def list_parents(self, part_name):
+    #     if part_name not in self.parts_parents:
+    #         return []
+    #     parents = []
+    #     current_part = part_name
+    #     while current_part and current_part in self.parts_parents:
+    #         next_parent = self.parts_parents[current_part]
+    #         if next_parent:
+    #             parents.insert(0, next_parent)
+    #         current_part = next_parent
+    #     return parents
 
-    def walk_parts(self, visitor_before, visitor_after=None, tree=None):
-        if tree is None:
-            tree = self.parts_tree
-        for part_name, other_parts in tree.items():
-            if part_name in self.parts:
-                visitor_before(self, part_name)
-                self.walk_parts(visitor_before, visitor_after, other_parts)
-                if visitor_after:
-                    visitor_after(self, part_name)
+    # def walk_parts(self, visitor_before, visitor_after=None, tree=None):
+    #     if tree is None:
+    #         tree = self.parts_tree
+    #     for part_name, other_parts in tree.items():
+    #         if part_name in self.parts:
+    #             visitor_before(self, part_name)
+    #             self.walk_parts(visitor_before, visitor_after, other_parts)
+    #             if visitor_after:
+    #                 visitor_after(self, part_name)
 
     def walk_parts_ordered(self, visitor, ordered_tree=None, parent_part_name=None):
         if ordered_tree is None:
@@ -113,20 +125,21 @@ class UnitData(object):
             for branch in this_part_branches:
                 self.walk_parts_ordered(visitor, ordered_tree=branch, parent_part_name=this_part_name)
 
-    def walk_parts_before_after(self, visitor_before, visitor_after, ordered_tree=None, parent_part_name=None):
-        if ordered_tree is None:
-            ordered_tree = self.parts_tree_ordered
-        this_part_name = ordered_tree[0]
-        if this_part_name not in self.parts:
-            return
-        this_part_branches = ordered_tree[1]
-        visitor_before(this_part_name, parent_part_name)
-        if this_part_branches:
-            for branch in this_part_branches:
-                self.walk_parts_before_after(visitor_before, visitor_after, ordered_tree=branch, parent_part_name=this_part_name)
-        visitor_after(this_part_name, parent_part_name)
+    # def walk_parts_before_after(self, visitor_before, visitor_after, ordered_tree=None, parent_part_name=None):
+    #     if ordered_tree is None:
+    #         ordered_tree = self.parts_tree_ordered
+    #     this_part_name = ordered_tree[0]
+    #     if this_part_name not in self.parts:
+    #         return
+    #     this_part_branches = ordered_tree[1]
+    #     visitor_before(this_part_name, parent_part_name)
+    #     if this_part_branches:
+    #         for branch in this_part_branches:
+    #             self.walk_parts_before_after(visitor_before, visitor_after, ordered_tree=branch, parent_part_name=this_part_name)
+    #     visitor_after(this_part_name, parent_part_name)
 
     def calculate_animations(self):
+        anim_part_y_shift = {}
 
         def _part_visitor(part_name, parent_part_name):
             bone_t = [0, 0, 0]
@@ -134,6 +147,8 @@ class UnitData(object):
                 bone_t = self.bones[part_name]
             count = 0
             for anim_name in self.animations_loaded:
+                if anim_name not in anim_part_y_shift:
+                    anim_part_y_shift[anim_name] = 0
                 a = self.animations[anim_name]
                 if part_name not in a.parts:
                     a.parts[part_name] = a.parts[parent_part_name].duplicate()
@@ -168,23 +183,99 @@ class UnitData(object):
                 part_a.rotation_frames_input = []
                 part_a.translation_frames_input = []
                 count += 1
-            if _Debug:
-                print(f'    calculated {count} animations for [{part_name}]')
+
+            # if _Debug:
+            #     print(f'    calculated {count} animations for [{part_name}]')
 
         self.walk_parts_ordered(_part_visitor)
 
 
 class ModelData(object):
 
-    def __init__(self, template, **kwargs):
-        self.template = template
+    def __init__(self, **kwargs):
         self.links = {}
         self.figures = {}
         self.bones = {}
         self.animations = {}
 
-    def unpack_figure_data(self, figures_res_file_path, destination_dir, save_json=False):
-        destination_sub_dir = os.path.join(destination_dir, self.template)
+    def scan_figures_data(self, figures_res_file_path):
+        items = {}
+        with open(figures_res_file_path, 'rb') as figures_file:
+            res_filetree_dict = res.read_res_filetree(figures_file, return_dict=True)
+            for k in res_filetree_dict.keys():
+                ext = k[-4:].lower().replace('.', '')
+                if ext not in items:
+                    items[ext] = []
+                items[ext].append(k[:-4])
+        return items
+
+    def unpack_texture(self, texture_res_file_path, destination_dir, name):
+        if not os.path.isdir(destination_dir):
+            os.makedirs(destination_dir)
+        with open(texture_res_file_path, 'rb') as texture_file:
+            res_filetree_dict = res.read_res_filetree(texture_file, return_dict=True)
+            for k in res_filetree_dict.keys():
+                if k.lower().endswith('.mmp') and k[:-4].lower() == name.lower():
+                    mmp_file_path = os.path.join(destination_dir, name.lower() + '.mmp')
+                    png_file_path = os.path.join(destination_dir, name.lower() + '.png')
+                    res.unpack_res_element(texture_file, res_filetree_dict[k], dest_file_name=mmp_file_path)
+                    pil_img = res.read_mmp(mmp_file_path)
+                    pil_img.save(png_file_path)
+                    os.remove(mmp_file_path)
+                    if _Debug:
+                        print(f'unpacked texture {name} to {png_file_path}')
+                    return png_file_path
+        return None
+
+    def load_figure_data(self, figure_dir_path, template):
+        lnk_file_path = os.path.join(figure_dir_path, template + '.lnk')
+        if not os.path.isfile(lnk_file_path):
+            return None
+        lnk_list, lnk_tree, lnk_parents, _ = res.read_lnk_info(lnk_file_path)
+        self.links[template] = {
+            'ordered': lnk_list,
+            # 'tree': lnk_tree,
+            # 'parents': lnk_parents,
+        }
+        this_model_links = res.flat_tree(lnk_list)
+        anm_count = 0
+        for file_name in os.listdir(figure_dir_path):
+            file_name = file_name.lower()
+            sub_path = os.path.join(figure_dir_path, file_name)
+            if os.path.isfile(sub_path):
+                if file_name.endswith('.fig'):
+                    if file_name[:-4] not in this_model_links:
+                        continue
+                    fig_file_path = os.path.join(figure_dir_path, file_name)
+                    # try:
+                    fig_info = res.read_fig_info(fig_file_path)
+                    # except Exception as exc:
+                    #     if _Debug:
+                    #         print(f'error reading figure file {fig_file_path}: {exc}')
+                    #     continue
+                    self.figures[file_name[:-4]] = fig_info
+                elif file_name.endswith('.bon'):
+                    if file_name[:-4] not in this_model_links:
+                        continue
+                    bon_file_path = os.path.join(figure_dir_path, file_name)
+                    self.bones[file_name[:-4]] = res.read_bon_info(bon_file_path)
+                    # if file_name[:-4] == 'rh3':
+                    #     print('bon_file_path', bon_file_path, file_name[:-4])
+                    #     self.bones['rh3.arrow00'] = self.bones['rh3'].copy()
+            elif os.path.isdir(sub_path):
+                if file_name not in self.animations:
+                    self.animations[file_name] = {}
+                for sub_file_name in os.listdir(sub_path):
+                    sub_file_name = sub_file_name.lower()
+                    if sub_file_name.endswith('.anm'):
+                        anm_file_path = os.path.join(sub_path, sub_file_name)
+                        self.animations[file_name][sub_file_name[:-4]] = res.read_anm_info(anm_file_path)
+                        anm_count += 1
+        if _Debug:
+            print(f'      for model {{{template}}} loaded {len(self.links)} links, {len(self.figures)} figures, {len(self.bones)} bones and {anm_count} animations')
+
+    def unpack_figure_data(self, figures_res_file_path, destination_dir, template, selected_parts=[], selected_animations=[], save_json=False):
+        destination_sub_dir = os.path.join(destination_dir, template)
         if not os.path.isdir(destination_sub_dir):
             os.makedirs(destination_sub_dir)
         lnk_count = 0
@@ -193,27 +284,73 @@ class ModelData(object):
         anm_count = 0
         with open(figures_res_file_path, 'rb') as figures_file:
             res_filetree_dict = res.read_res_filetree(figures_file, return_dict=True)
-            res_mod_element = res_filetree_dict.get(self.template + '.mod')
+            lnk_file_name = template + '.lnk'
+            mod_file_name = template + '.mod'
+            anm_file_name = template + '.anm'
+            lnk_element = res_filetree_dict.get(lnk_file_name)
+            this_model_links = None
+            if lnk_element:
+                res.unpack_res_element(figures_file, lnk_element, dest_file_name=os.path.join(destination_sub_dir, lnk_file_name))
+                lnk_file_path = os.path.join(destination_sub_dir, lnk_file_name)
+                lnk_list, lnk_tree, lnk_parents, _ = res.read_lnk_info(lnk_file_path)
+                lnk_count += 1
+                self.links[lnk_file_name[:-4]] = {
+                    'ordered': lnk_list,
+                    # 'tree': lnk_tree,
+                    # 'parents': lnk_parents,
+                }
+                this_model_links = res.flat_tree(lnk_list)
+            res_mod_element = res_filetree_dict.get(mod_file_name)
             if res_mod_element:
-                mod_file_name = res.unpack_res_element(figures_file, res_mod_element, dest_file_name=os.path.join(destination_sub_dir, self.template + '.mod'))
+                mod_file_name = res.unpack_res_element(figures_file, res_mod_element, dest_file_name=os.path.join(destination_sub_dir, mod_file_name))
                 mod_filetree = res.unpack_mod_info(mod_file_name, destination_dir=destination_sub_dir)
-                for mod_element in mod_filetree:
-                    if mod_element[0].endswith('.fig'):
-                        fig_file_name = os.path.join(destination_sub_dir, mod_element[0])
-                        self.figures[mod_element[0][:-4]] = res.read_fig_info(fig_file_name)
-                        fig_count += 1
-                    elif mod_element[0].endswith('.lnk'):
-                        lnk_file_name = os.path.join(destination_sub_dir, mod_element[0])
-                        lnk_list, lnk_tree, lnk_parents, _ = res.read_lnk_info(lnk_file_name)
-                        lnk_count += 1
-                        self.links[mod_element[0][:-4]] = {
-                            'ordered': lnk_list,
-                            'tree': lnk_tree,
-                            'parents': lnk_parents,
-                        }
-            res_anm_element = res_filetree_dict.get(self.template + '.anm')
+                if this_model_links is None:
+                    for mod_element in sorted(mod_filetree):
+                        el = mod_element[0][:-4]
+                        if mod_element[0].lower().endswith('.lnk'):
+                            lnk_file_name = mod_element[0].lower()
+                            lnk_file_path = os.path.join(destination_sub_dir, lnk_file_name)
+                            lnk_list, lnk_tree, lnk_parents, _ = res.read_lnk_info(lnk_file_path)
+                            lnk_count += 1
+                            self.links[lnk_file_name[:-4]] = {
+                                'ordered': lnk_list,
+                                # 'tree': lnk_tree,
+                                # 'parents': lnk_parents,
+                            }
+                            if template == lnk_file_name[:-4]:
+                                this_model_links = res.flat_tree(lnk_list)
+                for mod_element in sorted(mod_filetree):
+                    if mod_element[0].lower().endswith('.fig'):
+                        fig_element = mod_element[0][:-4].lower()
+                        if fig_element not in this_model_links:
+                            continue
+                        if not selected_parts or fig_element in selected_parts:
+                            fig_file_name = os.path.join(destination_sub_dir, mod_element[0])
+                            fig_info = res.read_fig_info(fig_file_name)
+                            self.figures[mod_element[0][:-4]] = fig_info
+                            fig_count += 1
+            else:
+                if this_model_links is not None:
+                    for part_name in this_model_links:
+                        part_name = part_name.lower()
+                        fig_element = part_name + '.fig'
+                        bon_element = part_name + '.bon'
+                        if not selected_parts or part_name in selected_parts:
+                            res_fig_element = res_filetree_dict.get(template + fig_element)
+                            if res_fig_element:
+                                fig_file_name = res.unpack_res_element(figures_file, res_fig_element, dest_file_name=os.path.join(destination_sub_dir, fig_element))
+                                fig_info = res.read_fig_info(fig_file_name)
+                                self.figures[part_name] = fig_info
+                                fig_count += 1
+                            res_bon_element = res_filetree_dict.get(template + bon_element)
+                            if res_bon_element:
+                                bon_file_name = res.unpack_res_element(figures_file, res_bon_element, dest_file_name=os.path.join(destination_sub_dir, bon_element))
+                                bon_info = res.read_bon_info(bon_file_name)
+                                self.bones[part_name] = bon_info
+                                bon_count += 1
+            res_anm_element = res_filetree_dict.get(anm_file_name)
             if res_anm_element:
-                anm_file_name = res.unpack_res_element(figures_file, res_anm_element, dest_file_name=os.path.join(destination_sub_dir, self.template + '.anm'))
+                anm_file_name = res.unpack_res_element(figures_file, res_anm_element, dest_file_name=os.path.join(destination_sub_dir, anm_file_name))
                 with open(anm_file_name, 'rb') as anm_file:
                     anm_filetree = res.read_res_filetree(anm_file)
                     for anm_element in anm_filetree:
@@ -222,40 +359,346 @@ class ModelData(object):
                         anm_element[0] += '.anm'
                     res.unpack_res(anm_file, anm_filetree, destination_dir=destination_sub_dir)
                     for anm_element in anm_filetree:
-                        one_anm_file_name = os.path.join(destination_sub_dir, anm_element[0])
-                        with open(one_anm_file_name, 'rb') as one_anm_file:
-                            one_anm_filetree = res.read_res_filetree(one_anm_file)
-                            self.animations[anm_element[0][:-4]] = {}
-                            for one_anm_element in one_anm_filetree:
-                                one_anm_dest_file_name = os.path.join(destination_sub_dir, anm_element[0][:-4], one_anm_element[0] + '.anm')
-                                res.unpack_res_element(one_anm_file, one_anm_element, dest_file_name=one_anm_dest_file_name)
-                                self.animations[anm_element[0][:-4]][one_anm_element[0]] = res.read_anm_info(one_anm_dest_file_name)
-                                anm_count += 1
-            res_bon_element = res_filetree_dict.get(self.template + '.bon')
+                        el = anm_element[0][:-4]
+                        if not selected_animations or el in selected_animations:
+                            one_anm_file_name = os.path.join(destination_sub_dir, anm_element[0])
+                            with open(one_anm_file_name, 'rb') as one_anm_file:
+                                one_anm_filetree = res.read_res_filetree(one_anm_file)
+                                self.animations[anm_element[0][:-4]] = {}
+                                for one_anm_element in one_anm_filetree:
+                                    el_part = one_anm_element[0]
+                                    if this_model_links and el_part not in this_model_links:
+                                        continue
+                                    if not selected_parts or el_part in selected_parts:
+                                        one_anm_dest_file_name = os.path.join(destination_sub_dir, anm_element[0][:-4], one_anm_element[0] + '.anm')
+                                        res.unpack_res_element(one_anm_file, one_anm_element, dest_file_name=one_anm_dest_file_name)
+                                        self.animations[anm_element[0][:-4]][one_anm_element[0]] = res.read_anm_info(one_anm_dest_file_name)
+                                        anm_count += 1
+            res_bon_element = res_filetree_dict.get(template + '.bon')
             if res_bon_element:
-                bon_file_name = res.unpack_res_element(figures_file, res_bon_element, dest_file_name=os.path.join(destination_sub_dir, self.template + '.bon'))
+                bon_file_name = res.unpack_res_element(figures_file, res_bon_element, dest_file_name=os.path.join(destination_sub_dir, template + '.bon'))
                 with open(bon_file_name, 'rb') as bon_file:
                     bon_filetree = res.read_res_filetree(bon_file)
                     for bon_element in bon_filetree:
                         bon_element[0] += '.bon'
                     res.unpack_res(bon_file, bon_filetree, destination_dir=destination_sub_dir)
                     for bon_element in bon_filetree:
+                        if this_model_links and bon_element[0][:-4] not in this_model_links:
+                            continue
                         one_bon_file_name = os.path.join(destination_sub_dir, bon_element[0])
                         self.bones[bon_element[0][:-4]] = res.read_bon_info(one_bon_file_name)
                         bon_count += 1
         if _Debug:
-            print(f'for model {{{self.template}}} unpacked {lnk_count} links, {fig_count} figures, {bon_count} bones and {anm_count} animations')
+            print(f'      for model {{{template}}} unpacked {lnk_count} links, {fig_count} figures, {bon_count} bones and {anm_count} animations')
         if save_json:
-            dest_json_file_path = os.path.join(destination_dir, self.template + '.json')
+            dest_json_file_path = os.path.join(destination_dir, template + '.json')
             open(dest_json_file_path, 'wt').write(json.dumps({
-                'template': self.template,
+                'template': template,
                 'figures': self.figures,
                 'links': self.links,
                 'animations': self.animations,
                 'bones': self.bones,
             }, indent=2))
             if _Debug:
-                print(f'for model {{{self.template}}} saved {lnk_count} links, {fig_count} figures, {bon_count} bones and {anm_count} animations to {dest_json_file_path}')
+                print(f'      for model {{{template}}} saved {lnk_count} links, {fig_count} figures, {bon_count} bones and {anm_count} animations to {dest_json_file_path}')
+
+
+class CatalogData(object):
+
+    def __init__(self):
+        self.figures = {}
+        self.animations = {}
+        self.armors = {}
+        self.weapons = {}
+        self.materials = {}
+
+    def load_figures(self, figures_file_name):
+        self.figures = json.loads(open(figures_file_name, 'rt').read())
+
+    def load_animations(self, animations_file_name):
+        self.animations = json.loads(open(animations_file_name, 'rt').read())
+
+    def load_armors(self, armors_file_name):
+        self.armors = json.loads(open(armors_file_name, 'rt').read())
+
+    def load_weapons(self, weapons_file_name):
+        self.weapons = json.loads(open(weapons_file_name, 'rt').read())
+
+    def load_materials(self, materials_file_name):
+        self.materials = json.loads(open(materials_file_name, 'rt').read())
+
+    def build_template_data(self, model_name, skin=0, hair=None, wears=[], weapon=None, texture=None):
+        animations = []
+        textures = {}
+        is_human = model_name in ['unhuma', 'unhufe']
+        is_orc = model_name in ['unorfe', 'unorma']
+        if is_human or is_orc:
+            textures['*'] = f'{model_name}skin_{skin:02}:0'
+        else:
+            textures['*'] = f'{texture or "default0"}:0'
+        if not isinstance(wears, list):
+            wears = [wears, ]
+        parts_ordered_tree = self.figures[model_name].copy()
+        parts_list_flat = res.flat_tree(parts_ordered_tree)
+        parts = []
+        for part_name in parts_list_flat:
+            if part_name.count('.') == 1:
+                continue
+            ignore_prefix_found = False
+            for ignore_prefix in ['r_shell', 'l_shell', 'bwpart', 'bwtetiva', 'baserh', 'basearrow', 'basepike', 'baseaxe',
+                                  'baseclub', 'crbow', 'basesword', 'basedagger', 'basesword', 'quiver', 'arrows']:
+                if part_name.startswith(ignore_prefix):
+                    ignore_prefix_found = True
+                    break
+            if ignore_prefix_found:
+                continue
+            if part_name not in parts:
+                parts.append(part_name)
+        if not parts:
+            parts = parts_list_flat.copy()
+        has_helm = False
+        # has_plate = False
+        # has_pants = False
+        # has_shirt = False
+        # has_boots = False
+        for wear in wears:
+            armor_name, material_name = wear.split('.')
+            material_name = material_name.strip()
+            armor = self.armors[armor_name]
+            armor_type = armor['type']
+            if armor_type == 'helm':
+                has_helm = True
+            # elif armor_type == 'plate':
+            #     has_plate = True
+            # elif armor_type == 'pants':
+            #     has_pants = True
+            # elif armor_type == 'shirt':
+            #     has_shirt = True
+            # elif armor_type == 'boots':
+            #     has_boots = True
+            armor_code = dict(
+                plate='pl', 
+                gloves='gl',
+                leggings='lg',
+                boots='bt',
+                shirt='sh',
+                helm='hl',
+                pants='pt',
+            ).get(armor_type)
+            texture_type_1 = armor['texture_type_1']
+            texture_type_2 = armor['texture_type_2']
+            armor_id = int(texture_type_1)
+            material = self.materials[material_name]
+            material_code = material['code']
+            body_parts = dict(
+                plate='bd.a,rh1.a,rh2.a,lh1.a,lh2.a',
+                gloves='lh3,rh3',
+                leggings='hp.a,rl1.a,rl2.a,rl3.a,ll1.a,ll2.a,ll3.a',
+                boots='ll3,rl3',
+                shirt='bd,rh1,rh2,rh3,lh1,lh2,lh3',
+                helm='hd.a',
+                pants='hp,rl1,rl2,ll1,ll2',
+            ).get(armor_type).split(',')
+            if armor_type == 'pants' and armor_id in [1, 2, 3, 6]:
+                body_parts.append('l_shell.a')
+                body_parts.append('r_shell.a')
+            for body_part in body_parts:
+                body_part = body_part.replace('.a', f'.armor{armor_id:02}' if armor_id else '')
+                body_part_texture = f"{model_name}{armor_code}_{texture_type_1:02}.{material_code}.{texture_type_2}"
+                if body_part.count('.armor'):
+                    if armor_type in ['helm', ]:
+                        body_part_texture = f'{body_part_texture}:1'
+                    elif armor_type in ['boots', 'gloves', ]:
+                        body_part_texture = f'{body_part_texture}:0'
+                    elif armor_type in ['plate', 'pants']:
+                        body_part_texture = f'{body_part_texture}:0'
+                    else:
+                        body_part_texture = f'{body_part_texture}:0'
+                elif body_part in parts:
+                    body_part_texture = f'{body_part_texture}:0'
+                else:
+                    body_part_texture = f'{body_part_texture}:0'
+                textures[body_part] = body_part_texture
+            for body_part in body_parts:
+                armor_id = texture_type_1
+                body_part = body_part.replace('.a', f'.armor{armor_id:02}' if armor_id else '')
+                if body_part not in parts:
+                    parts.append(body_part)
+        if is_human:
+            if not has_helm and hair is not None and hair >= 0:
+                parts.append(f'hr.{hair:02}')
+        weapon_type = None
+        if weapon:
+            weapon_name, material_name = weapon.split('.')
+            if material_name.count(' ['):
+                material_name = material_name.split(' ')[0].strip()
+            weapon_info = self.weapons[weapon_name]
+            weapon_type = weapon_info['type']
+            material = self.materials[material_name]
+            material_code = material['code']
+            texture_type_1 = weapon_info['texture_type_1']
+            texture_type_2 = weapon_info['texture_type_2']
+            weapon_id = int(texture_type_1)
+            weapon_code = dict(
+                hammer='hm',
+                dagger='dg',
+                spear='sp',
+                crossbow='cb',
+                sword='sw',
+                axe='ax',
+                bow='bw',
+            ).get(weapon_type)
+            body_parts = ''
+            weapon_texture = f"{model_name}{weapon_code}_{texture_type_1:02}.{material_code}.{texture_type_2}:1"
+            if weapon_type == 'bow':
+                if weapon_id == 0:
+                    parts.append('lh3.bwpartb00')
+                    parts.append('bwparta00')
+                    parts.append('bwtetivaa00')
+                    parts.append('bwtetivab00')
+                    textures['lh3.bwpartb00'] = weapon_texture
+                    textures['bwparta00'] = weapon_texture
+                    textures['bwtetivaa00'] = weapon_texture
+                    textures['bwtetivab00'] = weapon_texture
+                else:
+                    parts.append('lh3.bwpartb00.hidden')
+                    parts.append(f'lh3.bwpartb{weapon_id:02}')
+                    textures[f'lh3.bwpartb{weapon_id:02}'] = weapon_texture
+                    parts.append('bwparta00.hidden')
+                    parts.append(f'bwparta{weapon_id:02}')
+                    textures[f'bwparta{weapon_id:02}'] = weapon_texture
+                    parts.append('bwtetivaa00.hidden')
+                    parts.append(f'bwtetivaa{weapon_id:02}')
+                    textures[f'bwtetivaa{weapon_id:02}'] = weapon_texture
+                    parts.append('bwtetivab00.hidden')
+                    parts.append(f'bwtetivab{weapon_id:02}')
+                    textures[f'bwtetivab{weapon_id:02}'] = weapon_texture
+                parts.append('rh3.arrow00')
+                textures['rh3.arrow00'] = weapon_texture
+                # parts.append('basearrow00')
+                # textures['basearrow00'] = weapon_texture
+                parts.append('quiver')
+                textures['quiver'] = weapon_texture
+                parts.append('arrows')
+                textures['arrows'] = weapon_texture
+            elif weapon_type == 'crossbow':
+                if weapon_id == 1:
+                    parts.append('rh3.crbow01main')
+                    parts.append('crbow01part01')
+                    parts.append('crbow01tetiva01')
+                    parts.append('crbow01part02')
+                    parts.append('crbow01tetiva02')
+                    textures['rh3.crbow01main'] = weapon_texture
+                    textures['crbow01part01'] = weapon_texture
+                    textures['crbow01tetiva01'] = weapon_texture
+                    textures['crbow01part02'] = weapon_texture
+                    textures['crbow01tetiva02'] = weapon_texture
+                else:
+                    parts.append('rh3.crbow01main.hidden')
+                    parts.append(f'rh3.crbow{weapon_id:02}main')
+                    textures[f'rh3.crbow{weapon_id:02}main'] = weapon_texture
+                    parts.append('crbow01part01.hidden')
+                    parts.append(f'crbow{weapon_id:02}part01')
+                    textures[f'crbow{weapon_id:02}part01'] = weapon_texture
+                    parts.append('crbow01tetiva01.hidden')
+                    parts.append(f'crbow{weapon_id:02}tetiva01')
+                    textures[f'crbow{weapon_id:02}tetiva01'] = weapon_texture
+                    parts.append('crbow01part02.hidden')
+                    parts.append(f'crbow{weapon_id:02}part02')
+                    textures[f'crbow{weapon_id:02}part02'] = weapon_texture
+                    parts.append('crbow01tetiva02.hidden')
+                    parts.append(f'crbow{weapon_id:02}tetiva02')
+                    textures[f'crbow{weapon_id:02}tetiva02'] = weapon_texture
+            elif weapon_type == 'spear':
+                if weapon_id == 0:
+                    parts.append('rh3.pike00')
+                    parts.append('basepike00')
+                    textures['rh3.pike00'] = weapon_texture
+                    textures['basepike00'] = weapon_texture
+                else:
+                    parts.append('rh3.pike00.hidden')
+                    parts.append(f'rh3.pike{weapon_id:02}')
+                    parts.append(f'basepike{weapon_id:02}')
+                    textures[f'rh3.pike{weapon_id:02}'] = weapon_texture
+                    textures[f'basepike{weapon_id:02}'] = weapon_texture
+            elif weapon_type == 'sword':
+                if weapon_id == 0:
+                    parts.append('rh3.sword00')
+                    parts.append('basesword00')
+                    textures['rh3.sword00'] = weapon_texture
+                    textures['basesword00'] = weapon_texture
+                else:
+                    weapon_id = weapon_id % 5
+                    parts.append('rh3.sword00.hidden')
+                    parts.append(f'rh3.sword{weapon_id:02}')
+                    parts.append(f'basesword{weapon_id:02}')
+                    textures[f'rh3.sword{weapon_id:02}'] = weapon_texture
+                    textures[f'basesword{weapon_id:02}'] = weapon_texture
+            elif weapon_type == 'dagger':
+                if weapon_id == 0:
+                    parts.append('rh3.sword00')
+                    parts.append('basesword00')
+                    textures['rh3.sword00'] = weapon_texture
+                    textures['basesword00'] = weapon_texture
+                else:
+                    parts.append('rh3.sword00.hidden')
+                    parts.append(f'rh3.dagger{weapon_id:02}')
+                    parts.append(f'basedagger{weapon_id:02}')
+                    textures[f'rh3.dagger{weapon_id:02}'] = weapon_texture
+                    textures[f'basedagger{weapon_id:02}'] = weapon_texture
+            elif weapon_type == 'axe':
+                if weapon_id == 0:
+                    parts.append('rh3.axe00')
+                    parts.append('baseaxe00')
+                    textures['rh3.axe00'] = weapon_texture
+                    textures['baseaxe00'] = weapon_texture
+                else:
+                    parts.append('rh3.axe00.hidden')
+                    parts.append(f'rh3.axe{weapon_id:02}')
+                    parts.append(f'baseaxe{weapon_id:02}')
+                    textures[f'rh3.axe{weapon_id:02}'] = weapon_texture
+                    textures[f'baseaxe{weapon_id:02}'] = weapon_texture
+            elif weapon_type == 'hammer':
+                if weapon_id == 0:
+                    parts.append('rh3.axe00')
+                    parts.append('baseaxe00')
+                    textures['rh3.axe00'] = weapon_texture
+                    textures['baseaxe00'] = weapon_texture
+                else:
+                    parts.append('rh3.axe00.hidden')
+                    parts.append(f'rh3.club{weapon_id:02}')
+                    parts.append(f'baseclub{weapon_id:02}')
+                    textures[f'rh3.club{weapon_id:02}'] = weapon_texture
+                    textures[f'baseclub{weapon_id:02}'] = weapon_texture
+        anim = self.animations[model_name]
+        action_types = {}
+        for action in anim['actions']:
+            action_name = action['action_name']
+            animation_length = action['animation_length']
+            weapons = action['weapons'].split(',')
+            if not action['weapons'] or weapons == ['all', ]:
+                animations.append(action_name)
+            else:
+                if weapon_type and weapon_type in weapons:
+                    animations.append(action_name)
+            action_type = action['action_type'].split(':')[0]
+            if action['animation_stage'] == 'cycle':
+                if action_type not in action_types:
+                    action_types[action_type] = []
+                action_types[action_type].append({
+                    'name': action_name,
+                    'frames': animation_length,
+                })
+        return dict(
+            model_name=model_name,
+            parts=parts,
+            textures=textures,
+            action_types=action_types,
+            animations=animations,
+            min_height=anim['minimal_height'],
+            avg_height=anim['average_height'],
+            max_height=anim['maximal_height'],
+        )
 
 
 class LandData(object):
@@ -263,17 +706,174 @@ class LandData(object):
     def __init__(self):
         self.width = None
         self.height = None
-        self.elevation_map_data = None
-        self.tiles_texture_map = {}
+        self.tiles_textures_dir_path = None
+        self.elevation_map_data = {}
+        self.tiles_map_data = {}
+        self.tiles_files = {}
+        self.plants_map_data = {}
+        self.plants_variants = {}
+        self.buildings_map_data = {}
+        self.capitals = {}
+        self.towers = {}
 
-    def load_elevation_file(self, elevation_file_name):
-        im = Image(elevation_file_name, keep_data=True)
+    def load_tilemap_file(self, tilemap_file_name):
+        tiles_list = json.loads(open(res.data_path('assets/tiles.json'), 'rt').read())
+        tiles_registry = {}
+        for tile_info in tiles_list:
+            catalog_id, mozaic_id, mozaic_pos = [int(i) for i in tile_info.split(' ')]
+            tiles_registry[catalog_id] = (mozaic_id, mozaic_pos)
+        im = Image(tilemap_file_name, keep_data=True)
+        if self.width is not None and self.width != im.width:
+            raise ValueError(f'land width mismatch: expected {self.width}, got {im.width}')
+        if self.height is not None and self.height != im.height:
+            raise ValueError(f'land height mismatch: expected {self.height}, got {im.height}')
+        data = im.image._data[0]
+        size = 3 if data.fmt in ('rgb', 'bgr') else 4
+        step = 1.0 / 8.0
+        corr = 1.0 / ( 64.0 * 8.0 )
+        for x in range(self.width):
+            for y in range(self.height):
+                index = y * data.width * size + x * size
+                raw = bytearray(data.data[index:index + size])
+                color = [int(c) for c in raw]
+                bgr_flag = False
+                if data.fmt == 'argb':
+                    color.reverse()  # bgra
+                    bgr_flag = True
+                elif data.fmt == 'abgr':
+                    color.reverse()  # rgba
+                # conversion for BGR->RGB, BGRA->RGBA format
+                if bgr_flag or data.fmt in ('bgr', 'bgra'):
+                    color[0], color[2] = color[2], color[0]
+                catalog_id = color[0] + color[1] * 256
+                rotate = color[2] * 90
+                mozaic_id, mozaic_pos = tiles_registry[catalog_id]
+                tex_cell_x = ( mozaic_pos % 8 ) * step
+                tex_cell_y = ( mozaic_pos // 8 ) * step
+                if rotate == 270:
+                    tex_coord00 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord01 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord10 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord11 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 0.0 / 8.0 + corr)
+                elif rotate == 0:
+                    tex_coord00 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord01 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord10 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord11 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 1.0 / 8.0 - corr)
+                elif rotate == 90:
+                    tex_coord00 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord01 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord10 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord11 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 1.0 / 8.0 - corr)
+                elif rotate == 180:
+                    tex_coord00 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord01 = (tex_cell_x + 1.0 / 8.0 - corr, tex_cell_y + 0.0 / 8.0 + corr)
+                    tex_coord10 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 1.0 / 8.0 - corr)
+                    tex_coord11 = (tex_cell_x + 0.0 / 8.0 + corr, tex_cell_y + 0.0 / 8.0 + corr)
+                self.tiles_map_data[(x, y)] = (mozaic_id, tex_coord00, tex_coord01, tex_coord10, tex_coord11)
+        return self.width, self.height
+
+    def elevation_unpack(self, h):
+        """
+        h is from 0 to 100
+        result is from -water_level*underwater_factor to 100^height_exponent
+        """
+        if h > const.INPUT_WATER_LEVEL:
+            return pow(h - 18, const.ELEVATION_UNPACK_EXPONENT)
+        if h <= 0:
+            return -1 * (const.INPUT_WATER_LEVEL - 1) * const.ELEVATION_UNPACK_UNDERWATER_FACTOR
+        return (float(h - const.INPUT_WATER_LEVEL) / float(h)) * float(const.ELEVATION_UNPACK_UNDERWATER_FACTOR)
+
+    def load_heightmap_file(self, heightmap_file_name):
+        e_min_unpacked = self.elevation_unpack(1)
+        e_max_unpacked = self.elevation_unpack(100)
+        unpacked_delta = e_max_unpacked - e_min_unpacked
+        im = Image(heightmap_file_name, keep_data=True)
         self.width = im.width
         self.height = im.height
-        _heights = []
         for w in range(self.width):
-            _heights.append(tuple(im.read_pixel(w, h)[0] for h in range(self.height)))
-        self.elevation_map_data = tuple(_heights)
+            for h in range(self.height):
+                e = float(im.read_pixel(w, h)[0]) * 255.0
+                e_unpacked = self.elevation_unpack(e)
+                e_scaled = (float(e_unpacked - e_min_unpacked) / unpacked_delta)
+                self.elevation_map_data[(w, h)] = e_scaled
+        return self.width, self.height
+
+    # def load_heightmap_file(self, heightmap_file_name):
+    #     im = Image(heightmap_file_name, keep_data=True)
+    #     self.width = im.width
+    #     self.height = im.height
+    #     for w in range(self.width):
+    #         for h in range(self.height):
+    #             e = float(im.read_pixel(w, h)[0]) * 255.0
+    #             self.elevation_map_data[(w, h)] = e
+    #     return self.width, self.height
+
+    def load_cache_tiles_textures(self, textures_dir_path):
+        self.tiles_textures_dir_path = textures_dir_path
+        count = 0
+        for file_name in os.listdir(self.tiles_textures_dir_path):
+            if not file_name.endswith('.png'):
+                continue
+            file_path = os.path.join(self.tiles_textures_dir_path, file_name)
+            file_path_source = resource_find(file_path)
+            if file_path_source:
+                _tex = Cache.get('kv.texture', file_path)
+                if not _tex:
+                    _tex = Image(file_path_source).texture
+                    Cache.append('kv.texture', file_path, _tex)
+                    count += 1
+                    self.tiles_files[int(file_name[:-4])] = file_path
+        if _Debug:
+            print(f'  cached {count} textures at {self.tiles_textures_dir_path} for land tiles')
+
+    def load_plants_data(self, plants_data_file_name):
+        plants_data = json.loads(open(plants_data_file_name, 'rt').read())
+        for plant_key in plants_data.keys():
+            template, texture, parts = plant_key.split('#')
+            plants_list = plants_data[plant_key]
+            for plant_coded in plants_list:
+                coefs, w, h, direction, plant_name, plant_template = plant_coded.split(' ')
+                w = float(w)
+                h = float(h)
+                c1, c2, c3 = coefs.split(':')
+                coefs_q = mth.quantize_coefs([float(c1), float(c2), float(c3)])
+                coefs_str = ':'.join([str(c) for c in coefs_q])
+                plant_variant_key = f'{template}#{texture}#{parts}#{coefs_str}'
+                plant = {}
+                plant['k'] = plant_variant_key
+                plant['m'] = template
+                plant['t'] = texture
+                plant['c'] = coefs_q
+                if plant_variant_key not in self.plants_variants:
+                    variant = dict(plant)
+                    variant['so'] = None
+                    self.plants_variants[plant_variant_key] = variant
+                int_w = int(float(w))
+                int_h = int(float(h))
+                shift_w = float(w) - float(int_w)
+                shift_h = float(h) - float(int_h)
+                plant['w'] = int_w
+                plant['h'] = int_h
+                plant['sw'] = shift_w
+                plant['sh'] = shift_h
+                plant['d'] = float(direction)
+                if (int_w, int_h) not in self.plants_map_data:
+                    self.plants_map_data[(int_w, int_h)] = []
+                self.plants_map_data[(int_w, int_h)].append(plant)
+
+    def load_buildings_data(self, buildings_data_file_name):
+        buildings_data = json.loads(open(buildings_data_file_name, 'rt').read())
+        for building_info in buildings_data:
+            x = int(building_info['x'])
+            y = int(building_info['y'])
+            if (x, y) not in self.buildings_map_data:
+                self.buildings_map_data[(x, y)] = []
+            self.buildings_map_data[(x, y)].append(building_info)
+            if building_info['k'] == 'capital':
+                self.capitals[building_info['i']] = building_info
+            elif building_info['k'] == 'tower':
+                self.towers[building_info['i']] = building_info
 
     def save_elevation_memmap(self, file_name_prefix, destination_dir):
         file_path = os.path.join(destination_dir, f'{file_name_prefix}.{self.width}.{self.height}.memmap')
@@ -283,137 +883,66 @@ class LandData(object):
         return file_path
 
     def get_elevation(self, w, h):
-        return self.elevation_map_data[w][h]
+        _w = w
+        _h = h
+        if w < 0:
+            _w = w + self.width
+        if w >= self.width:
+            _w = w - self.width
+        if h < 0:
+            _h = h + self.height
+        if h >= self.height:
+            _h = h - self.height
+        return self.elevation_map_data[(_w, _h)]
+
+    def get_texture(self, w, h):
+        _w = w
+        _h = h
+        if w < 0:
+            _w = w + self.width
+        if w >= self.width:
+            _w = w - self.width
+        if h < 0:
+            _h = h + self.height
+        if h >= self.height:
+            _h = h - self.height
+        mozaic_id, tex_coord00, tex_coord01, tex_coord10, tex_coord11 = self.tiles_map_data[(_w, _h)]
+        return self.tiles_files[mozaic_id], tex_coord00, tex_coord01, tex_coord10, tex_coord11
 
 
-class SceneData(object):
+def main():
+    cmd = sys.argv[1]
+    if cmd.startswith('list_') and len(sys.argv) > 2:
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        print('\n'.join(sorted(st[sys.argv[1].replace('list_', '')])))
+    elif cmd.startswith('show_') and len(sys.argv) > 3:
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        print('\n'.join(sorted(st[sys.argv[1].replace('show_', '')])))
+    elif cmd == 'list' and len(sys.argv) == 3:
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        print('\n'.join(sorted(st.keys())))
+    elif cmd == 'list_models':
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        print('\n'.join(sorted(st['mod'])))
+    elif cmd == 'list_figures':
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        print('\n'.join(sorted(st['fig'])))
+    elif cmd == 'unpack_models':
+        md = ModelData()
+        st = md.scan_figures_data(sys.argv[2])
+        lst = sorted(st['mod'])
+        for m in lst:
+            print(f'loading {m}')
+            try:
+                md.unpack_figure_data(sys.argv[2], destination_dir='models', template=m)
+            except Exception as exc:
+                print(m, traceback.format_exc())
+            
 
-    def __init__(self, land):
-        self.units = {}
-        self.meshes = {}
-        self.land = land
-        self.models = {}
-
-    def add_model(self, model):
-        self.models[model.template] = model
-
-    def create_mesh_from_fig_data(self, fig_data, prefix='', texture_filename=None, coefs=[0, 0, 0]):
-        global _NextMeshID
-        _NextMeshID += 1
-        name = prefix + '_' + str(_NextMeshID)
-        mesh = MeshData(
-            name=name,
-            material={'map_Kd': texture_filename} if texture_filename else None,
-        )
-        vert_buf = []
-        norm_buf = []
-        tex_buf = []
-        for i in range(fig_data[1]):
-            for j in range(4):
-                vert_buf.append(mth.ei2xyz_list([
-                    mth.trilinear([fig_data[13][i][0][k][j] for k in range(8)], coefs),
-                    mth.trilinear([fig_data[13][i][1][k][j] for k in range(8)], coefs),
-                    mth.trilinear([fig_data[13][i][2][k][j] for k in range(8)], coefs),
-                ]))
-        for i in range(fig_data[2]):
-            for j in range(4):
-                norm_buf.append(mth.ei2xyz_list([
-                    fig_data[14][i][0][j],
-                    fig_data[14][i][1][j],
-                    fig_data[14][i][2][j],
-                ]))
-        for i in range(fig_data[3]):
-            tex_buf.append(fig_data[15][i])
-        idx = 0
-        d = fig_data[17]
-        for i in fig_data[16]:
-            for f in range(3):
-                j = i[f]
-                mesh.vertices.extend([
-                    vert_buf[d[j][0] * 4 + d[j][1]][0],
-                    vert_buf[d[j][0] * 4 + d[j][1]][1],
-                    vert_buf[d[j][0] * 4 + d[j][1]][2],
-                    norm_buf[d[j][2] * 4 + d[j][3]][0],
-                    norm_buf[d[j][2] * 4 + d[j][3]][1],
-                    norm_buf[d[j][2] * 4 + d[j][3]][2],
-                    tex_buf[d[j][4]][0],
-                    tex_buf[d[j][4]][1],
-                ])
-            mesh.indices.extend([idx, idx + 1, idx + 2])
-            idx += 3
-        self.meshes[name] = mesh
-        if _Debug:
-            print(f'  prepared mesh <{name}> with {idx} faces')
-        return mesh
-    
-    def create_unit_from_model_data(self, template, coefs=[0, 0, 0], selected_parts=[], excluded_parts=[], selected_animations=[], textures={'*': 'default.png'}):
-        global _NextUnitID
-        _NextUnitID += 1
-        m = self.models[template]
-        u = UnitData()
-        u.template = template
-        u.name = template + str(_NextUnitID)
-        u.textures = textures
-        u.parts_tree_ordered = m.links[template]['ordered']
-        u.parts_tree = m.links[template]['tree']
-        u.parts_parents = m.links[template]['parents']
-        ordered_parts_list = res.flat_tree(u.parts_tree_ordered)
-        u.animations_loaded = selected_animations
-        if not u.animations_loaded:
-            u.animations_loaded = list(m.animations.keys())
-        related_meshes = {}
-        # first_animation_name = None
-        if not selected_parts:
-            selected_parts = ordered_parts_list
-        for exclude in excluded_parts:
-            if exclude in selected_parts:
-                selected_parts.remove(exclude)
-        if _Debug:
-            print(f'about to prepare unit ({u.name}) with {len(selected_parts)} parts and {len(u.animations_loaded)} animations from model {{{template}}}')
-        t1 = time.time()
-        for part_name in selected_parts:
-            u.parts.append(part_name)
-            part_info = m.bones[part_name]
-            u.bones[part_name] = mth.ei2xyz_list([
-                mth.trilinear([part_info[i][0] for i in range(8)], coefs),
-                mth.trilinear([part_info[i][1] for i in range(8)], coefs),
-                mth.trilinear([part_info[i][2] for i in range(8)], coefs),
-            ])
-            mesh = self.create_mesh_from_fig_data(
-                fig_data=m.figures[part_name],
-                prefix=u.name + '_' + part_name,
-                texture_filename=u.textures[part_name] if part_name in u.textures else u.textures['*'],
-                coefs=coefs,
-            )
-            mesh.unit_name = u.name
-            mesh.unit_part_name = part_name
-            u.meshes[part_name] = mesh
-            related_meshes[part_name] = mesh.name
-            for anim_name in u.animations_loaded:
-                if part_name not in m.animations[anim_name]:
-                    continue
-                animation_info = m.animations[anim_name][part_name]
-                if anim_name not in u.animations:
-                    u.animations[anim_name] = UnitAnimationData(template, anim_name)
-                a = UnitPartAnimationData()
-                a.rotation_frames_input = [mth.ei2quad_list(quad) for quad in animation_info[1]]
-                a.translation_frames_input = [mth.ei2xyz_list(coord) for coord in animation_info[3]]
-                morphing_frames = []
-                if animation_info[4] != 0 and animation_info[5] != 0:
-                    for value in animation_info[6]:
-                        morphing_frames.append([])
-                        for i in range(animation_info[5]):
-                            morphing_frames[0].append(mth.ei2xyz_list(value[i]))
-                    a.morphing_frames_input = morphing_frames
-                # if not first_animation_name:
-                #     first_animation_name = anim_name
-                a.frames = len(a.rotation_frames_input)
-                u.animations[anim_name].parts[part_name] = a
-
-        u.calculate_animations()
-        # u.animation_playing = first_animation_name
-        self.units[u.name] = u
-        t2 = time.time()
-        if _Debug:
-            print(f'unit ({u.name}) created in {t2 - t1} sec')
-        return u
+if __name__ == '__main__':
+    main()

@@ -1,4 +1,11 @@
 Kivy
 numpy
 pillow
+platformdirs
 PyYAML
+pygame-ce
+opencv-python
+imagehash
+scipy
+scikit-image
+shapely

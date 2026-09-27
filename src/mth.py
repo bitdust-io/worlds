@@ -1,21 +1,27 @@
 import math
 import numpy as np
 
+import const
+
+
+EI_SCALE_FACTOR = const.MODELS_SCALE_FACTOR
+
 
 def vec3sum(v1, v2):
     return [v1[0] + v2[0], v1[1] + v2[1], v1[2] + v2[2]]
 
 
-def ei2xyz(x, y, z):
-    return -x, z, y    
+def ei2xyz(x, y, z, c=1.0):
+    global EI_SCALE_FACTOR
+    return -x * EI_SCALE_FACTOR, z * EI_SCALE_FACTOR * c, y * EI_SCALE_FACTOR
 
 
 def ei2quad(w, x, y, z):
     return w, -x, z, y
     
     
-def ei2xyz_list(list3):
-    t = ei2xyz(list3[0], list3[1], list3[2])
+def ei2xyz_list(list3, c=1.0):
+    t = ei2xyz(list3[0], list3[1], list3[2], c=c)
     return [t[0], t[1], t[2]]
 
 
@@ -40,7 +46,7 @@ def axisAngleToQuaternion(axis:np.ndarray, angle:float) -> np.ndarray:
         quaternion defining the orientation    
     """
     if isinstance(axis, list) and len(axis)==3:
-        axis = np.array(axis) 
+        axis = np.array(axis)
     elif isinstance(axis, np.ndarray) and axis.size==3:
         pass
     else:
@@ -176,95 +182,95 @@ def rotationMatrixToQuaternion(R:np.ndarray) -> np.ndarray:
     return np.array([q0, q1, q2, q3])
 
 
-def eulerAnglesToQuaternion(eulerAngles:np.ndarray|list)->np.ndarray:
-    """
-    Convert an Euler angle to a quaternion.
+# def eulerAnglesToQuaternion(eulerAngles:np.ndarray|list)->np.ndarray:
+#     """
+#     Convert an Euler angle to a quaternion.
+#
+#     We have used the following definition of Euler angles.
+#
+#     - Tait-Bryan variant of Euler Angles
+#     - Yaw-pitch-roll rotation order (ZYX convention), rotating around the z, y and x axes respectively
+#     - Intrinsic rotation (the axes move with each rotation)
+#     - Active (otherwise known as alibi) rotation (the point is rotated, not the coordinate system)
+#     - Right-handed coordinate system with right-handed rotations
+#
+#     Parameters
+#     ----------
+#     eulerAngles : 
+#         [3x1] np.ndarray  
+#         [roll, pitch, yaw] angles in radians 
+#
+#     Returns
+#     -------
+#         [4x1] np.ndarray
+#         quaternion defining a given orientation
+#     """
+#     if isinstance(eulerAngles, list) and len(eulerAngles)==3:
+#         eulerAngles = np.array(eulerAngles) 
+#     elif isinstance(eulerAngles, np.ndarray) and eulerAngles.size==3:
+#         pass
+#     else:
+#         raise TypeError("The eulerAngles must be given as [3x1] np.ndarray vector or a python list of 3 elements")
+#
+#     roll = eulerAngles[0]
+#     pitch = eulerAngles[1]
+#     yaw = eulerAngles[2]
+#
+#     q0 = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+#     q1 = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+#     q2 = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+#     q3 = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+#
+#     return np.r_[q0, q1, q2, q3]
 
-    We have used the following definition of Euler angles.
 
-    - Tait-Bryan variant of Euler Angles
-    - Yaw-pitch-roll rotation order (ZYX convention), rotating around the z, y and x axes respectively
-    - Intrinsic rotation (the axes move with each rotation)
-    - Active (otherwise known as alibi) rotation (the point is rotated, not the coordinate system)
-    - Right-handed coordinate system with right-handed rotations
-
-    Parameters
-    ----------
-    eulerAngles : 
-        [3x1] np.ndarray  
-        [roll, pitch, yaw] angles in radians 
-    
-    Returns
-    -------
-        [4x1] np.ndarray
-        quaternion defining a given orientation
-    """
-    if isinstance(eulerAngles, list) and len(eulerAngles)==3:
-        eulerAngles = np.array(eulerAngles) 
-    elif isinstance(eulerAngles, np.ndarray) and eulerAngles.size==3:
-        pass
-    else:
-        raise TypeError("The eulerAngles must be given as [3x1] np.ndarray vector or a python list of 3 elements")
-
-    roll = eulerAngles[0]
-    pitch = eulerAngles[1]
-    yaw = eulerAngles[2]
-
-    q0 = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
-    q1 = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
-    q2 = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
-    q3 = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
-
-    return np.r_[q0, q1, q2, q3]
-
-
-def quaternionToEulerAngles(q:np.ndarray|list)->np.ndarray:
-    """
-    Convert a quaternion into euler angles [roll, pitch, yaw]
-    - roll is rotation around x in radians (CCW)
-    - pitch is rotation around y in radians (CCW)
-    - yaw is rotation around z in radians (CCW)
-
-    Parameters
-    ----------
-    q : [4x1] np.ndarray
-        quaternion defining a given orientation
-  
-    Returns
-    -------
-        [3x1] np.ndarray  
-        [roll, pitch, yaw] angles in radians 
-    """
-    if isinstance(q, list) and len(q)==4:
-        q = np.array(q) 
-    elif isinstance(q, np.ndarray) and q.size==4:
-        pass
-    else:
-        raise TypeError("The quaternion must be given as [4x1] np.ndarray vector or a python list of 4 elements")
-
-    q0 = q[0]
-    q1 = q[1]
-    q2 = q[2]
-    q3 = q[3]
-
-    t2 = 2.0*(q0*q2 - q1*q3)
-    t2 = 1.0 if t2 > 1.0 else t2
-    t2 = -1.0 if t2 < -1.0 else t2
-
-    if t2 == 1:
-        pitch = np.arcsin(t2)
-        roll = 0
-        yaw = -np.arctan2(q0, q1)
-    elif t2 == -1:
-        pitch = np.arcsin(t2)
-        roll = 0
-        yaw = +np.arctan2(q0, q1)
-    else:
-        pitch = np.arcsin(t2)
-        roll = np.arctan2(2.0*(q0*q1 + q2*q3), q0*q0 - q1*q1 - q2*q2 + q3*q3)
-        yaw = np.arctan2(2.0*(q0*q3 + q1*q2), q0*q0 + q1*q1 - q2*q2 - q3*q3)
-
-    return np.r_[roll, pitch, yaw]
+# def quaternionToEulerAngles(q:np.ndarray|list)->np.ndarray:
+#     """
+#     Convert a quaternion into euler angles [roll, pitch, yaw]
+#     - roll is rotation around x in radians (CCW)
+#     - pitch is rotation around y in radians (CCW)
+#     - yaw is rotation around z in radians (CCW)
+#
+#     Parameters
+#     ----------
+#     q : [4x1] np.ndarray
+#         quaternion defining a given orientation
+#
+#     Returns
+#     -------
+#         [3x1] np.ndarray  
+#         [roll, pitch, yaw] angles in radians 
+#     """
+#     if isinstance(q, list) and len(q)==4:
+#         q = np.array(q) 
+#     elif isinstance(q, np.ndarray) and q.size==4:
+#         pass
+#     else:
+#         raise TypeError("The quaternion must be given as [4x1] np.ndarray vector or a python list of 4 elements")
+#
+#     q0 = q[0]
+#     q1 = q[1]
+#     q2 = q[2]
+#     q3 = q[3]
+#
+#     t2 = 2.0*(q0*q2 - q1*q3)
+#     t2 = 1.0 if t2 > 1.0 else t2
+#     t2 = -1.0 if t2 < -1.0 else t2
+#
+#     if t2 == 1:
+#         pitch = np.arcsin(t2)
+#         roll = 0
+#         yaw = -np.arctan2(q0, q1)
+#     elif t2 == -1:
+#         pitch = np.arcsin(t2)
+#         roll = 0
+#         yaw = +np.arctan2(q0, q1)
+#     else:
+#         pitch = np.arcsin(t2)
+#         roll = np.arctan2(2.0*(q0*q1 + q2*q3), q0*q0 - q1*q1 - q2*q2 + q3*q3)
+#         yaw = np.arctan2(2.0*(q0*q3 + q1*q2), q0*q0 + q1*q1 - q2*q2 - q3*q3)
+#
+#     return np.r_[roll, pitch, yaw]
 
 
 def quaternion_multiply(q1, q2):
@@ -305,19 +311,156 @@ def trilinear(val, coefs=[0, 0, 0]):
     # Bilinear interpolation by dex
     v2 = t1 + (t2 - t1) * coefs[0]
     # Trilinear interpolation by height
-    return v1 + (v2 - v1) * coefs[2]
+    ret = v1 + (v2 - v1) * coefs[2]
+    return ret
 
 
 def latlon2xyz(latitude_radians, longitude_radians, radius=1.0):
-    """Converts latitude and longitude (degrees) to 3D Cartesian (x, y, z) on a sphere."""
+    """Converts latitude and longitude (radians) to 3D Cartesian (x, y, z) on a sphere."""
     x = radius * math.cos(latitude_radians) * math.cos(longitude_radians)
     y = radius * math.cos(latitude_radians) * math.sin(longitude_radians)
     z = radius * math.sin(latitude_radians)
     return x, y, z
 
 
+def latlon2xyz_tor(longitude_radians, latitude_radians, radius=1.0, torus_radius=0.5):
+    """Converts latitude and longitude (radians) to 3D Cartesian (x, y, z) on a torus."""
+    x = (radius + torus_radius * math.cos(latitude_radians)) * math.cos(longitude_radians)
+    y = (radius + torus_radius * math.cos(latitude_radians)) * math.sin(longitude_radians)
+    z = torus_radius * math.sin(latitude_radians)
+    return x, y, z
+
+# def latlon2xyz_degrees(latitude_degrees, longitude_degrees, radius=1.0):
+#     """Normalize and convert latitude and longitude (degrees) to 3D Cartesian (x, y, z) on a sphere."""
+#     lon_deg = (longitude_degrees) % 360.0
+#     lat_deg = max(-90.0, min(90.0, latitude_degrees))
+#     # lon_deg = (longitude_degrees + 180.0) % 360.0 - 180
+#     # lat_deg = max(-90.0, min(90.0, latitude_degrees))
+#     lat = math.radians( - lat_deg)
+#     lon = math.radians(90.0 - lon_deg)
+#     x = radius * math.cos(lat) * math.cos(lon)
+#     y = radius * math.cos(lat) * math.sin(lon)
+#     z = radius * math.sin(lat)    
+#     return x, y, z
+
+
+def wh2xyz_scipy(w, h, width, height, radius=1.0):
+    from scipy.spatial.transform import Rotation
+    # vector, angle1_degrees, angle2_degrees, axes='xz'
+    x_angle_radians = 2.0 * math.pi * w / width
+    z_angle_radians = 2.0 * math.pi * h / height
+    xz_rotations = Rotation.from_euler('xz', [x_angle_radians, z_angle_radians], degrees=False)
+    # quat_rotations = Rotation.from_quat(xz_rotations)
+    matrix_rotations = Rotation.from_matrix(xz_rotations.as_matrix())
+    vector = np.array([0.0, radius, 0.0])
+    r = matrix_rotations.apply(vector)
+    return r[0], r[1], r[2]
+
+
+DEBUG_PRINT = False
+
 def wh2xyz(w, h, width, height, radius=1.0):
-    # w, h, width, height is expected to be all float
-    latitude_radians = 2.0 * math.pi * w / width
-    longitude_radians = math.pi / 2.0 + 2.0 * math.pi * h / height
-    return latlon2xyz(latitude_radians, longitude_radians, radius=radius)
+    # global DEBUG_PRINT
+    lat = w2lat(w, width)
+    lon = h2lon(h, height)
+    # if DEBUG_PRINT:
+    #     DEBUG_PRINT = False
+    #     print(f"        w={w}, h={h}, width={width}, height={height} => lat={lat * 180.0 / math.pi}, lon={lon * 180.0 / math.pi}")
+    return latlon2xyz(lat, lon, radius=radius)
+    # latitude_degrees = ( 2.0 * 180.0 * w ) / float(width)
+    # longitude_degrees = 90.0 + ( 2.0 * 180.0 * h ) / float(height)
+    # return latlon2xyz_degrees(latitude_degrees, longitude_degrees, radius=radius)
+
+
+def wh2xyz_tor(w, h, width, height, radius=1.0, torus_radius=0.5):
+    lat = w2lat(w, width)
+    lon = h2lon(h, height)
+    return latlon2xyz_tor(lat, lon, radius=radius, torus_radius=torus_radius)
+
+
+def lat_globe2camera(degrees):
+    return degrees
+
+
+def lon_globe2camera(degrees):
+    return degrees
+
+
+def lat_camera2globe(degrees):
+    return degrees
+
+
+def lon_camera2globe(degrees):
+    return degrees
+
+
+def w2lat_degrees(w, width):
+    return ( 2.0 * 180.0 * ( w % width ) ) / float(width)
+
+
+def h2lon_degrees(h, height):
+    return ( 2.0 * 180.0 * ( h % height ) ) / float(height)
+
+
+def w2lat(w, width):
+    return ( 2.0 * math.pi * ( w % width ) ) / float(width)
+
+
+def h2lon(h, height):
+    return ( 2.0 * math.pi * ( h % height ) ) / float(height)
+
+
+def lat2w_degrees(latitude, width):
+    return ( latitude * width ) / ( 2.0 * 180.0 ) 
+
+
+def lon2h_degrees(longitude, height):
+    return ( longitude * height ) / ( 2.0 * 180.0 )
+
+
+def lat2w(latitude_radians, width):
+    return ( latitude_radians * width ) / ( 2.0 * math.pi ) 
+
+
+def lon2h(longitude_radians, height):
+    return ( longitude_radians * height ) / ( 2.0 * math.pi )
+
+
+def point_line_left_or_right(xp, yp, xa, ya, xb, yb):
+    v_x = xb - xa
+    v_y = yb - ya
+    w_x = xp - xa
+    w_y = yp - ya
+    cross_product = v_x * w_y - v_y * w_x
+    if cross_product > 0:
+        return -1
+    elif cross_product < 0:
+        return 1
+    return 0
+
+
+def get_z_in_triangle(x, y, p1, p2, p3):
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    x3, y3, z3 = p3
+    A = y1 * (z2 - z3) + y2 * (z3 - z1) + y3 * (z1 - z2)
+    B = z1 * (x2 - x3) + z2 * (x3 - x1) + z3 * (x1 - x2)
+    C = x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)
+    D = -(x1 * (y2 * z3 - y3 * z2) + x2 * (y3 * z1 - y1 * z3) + x3 * (y1 * z2 - y2 * z1))
+    if C == 0:
+        return (z1 + z2 + z3) / 3.0
+    return -(A * x + B * y + D) / C
+
+
+def to_positive_zero(v):
+    if v is -0.0 or v == 0.0:
+        return 0.0
+    return v
+
+
+def quantize_coefs(coefs, quant_size=0.5):
+    return [to_positive_zero(round(round(c / quant_size, 0) * quant_size, 1)) for c in coefs]
+
+
+def sqrt_dist(dx, dy):
+    return math.sqrt(dx*dx + dy*dy)
