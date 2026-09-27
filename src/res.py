@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import struct
 import collections
@@ -530,21 +531,24 @@ def build_res_yaml(filetree, f_name):
     return _buf
 
 
-def download_file(destination_dir, file_name, parts, url_prefix, callback=None):
+def download_file(destination_dir, file_name, parts, url_prefix, parts_delay=3, chunk_size=4096, chunk_delay=None, callback=None):
     dest_dir = data_path(destination_dir)
     if not os.path.isdir(dest_dir):
         os.makedirs(dest_dir)
     dest_file_path = os.path.join(dest_dir, file_name)
     if os.path.isfile(dest_file_path):
         if callback:
-            callback(dest_file_path)
+            callback(None)
         return dest_file_path
-    chunk_size = 4096
     progress = 0
     downloaded = 0
     if not parts:
         parts = [file_name, ]
+    if not isinstance(parts, list):
+        parts = [parts, ]
     for part in parts:
+        if downloaded:
+            time.sleep(parts_delay)
         document_url = url_prefix + part
         with requests.get(document_url, stream=True) as r:
             with open(dest_file_path, 'ab') as f:
@@ -557,6 +561,8 @@ def download_file(destination_dir, file_name, parts, url_prefix, callback=None):
                             progress -= 10 * 1024 * 1024
                             if _Debug:
                                 print(f"Downloading {file_name}: {downloaded} bytes")
+                        if chunk_delay:
+                            time.sleep(chunk_delay)
     if callback:
         callback(dest_file_path)
     return dest_file_path

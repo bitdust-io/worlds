@@ -212,6 +212,8 @@ class ModelData(object):
     def unpack_texture(self, texture_res_file_path, destination_dir, name):
         if not os.path.isdir(destination_dir):
             os.makedirs(destination_dir)
+        if _Debug:
+            print(f'    unpacking texture {name} from {texture_res_file_path} into {destination_dir}')
         with open(texture_res_file_path, 'rb') as texture_file:
             res_filetree_dict = res.read_res_filetree(texture_file, return_dict=True)
             for k in res_filetree_dict.keys():

@@ -326,7 +326,7 @@ class Scene(object):
         _NextMeshID += 1
         name = prefix + '_' + str(_NextMeshID)
         if material is None:
-            material = {'map_Kd': 'textures/model/' + texture + '.png'} if texture else None
+            material = {'map_Kd': res.data_path('textures/model/' + texture + '.png')} if texture else None
         mesh = dat.MeshData(
             name=name,
             material=material,
@@ -398,26 +398,26 @@ class Scene(object):
         if template == 'jbuho00':
             textures['towerbroken01'] = 'jigrantower00'
         materials = {}
-        if single_texture and not os.path.exists('textures/combined/'):
-            os.mkdir('textures/combined/')
+        if single_texture and not os.path.exists(res.data_path('textures/combined/')):
+            os.mkdir(res.data_path('textures/combined/'))
         if template not in self.models:
             m = dat.ModelData()
-            if os.path.isdir('models/' + template):
-                m.load_figure_data('models/' + template, template)
+            if os.path.isdir(res.data_path('models/' + template)):
+                m.load_figure_data(res.data_path('models/' + template), template)
             else:
                 if _Debug:
                     print(f'    loading template {template} from data/figures.res and unpacking into models/')
-                m.unpack_figure_data('data/figures.res', 'models', template=template)
+                m.unpack_figure_data(res.data_path('data/figures.res'), res.data_path('models'), template=template)
             for part_name in textures.keys():
                 texture = textures[part_name]
                 if texture.count(':') == 1:
                     texture = texture.split(':')[0]
-                tex_file_path = 'textures/model/' + texture + '.png'
+                tex_file_path = res.data_path('textures/model/' + texture + '.png')
                 if not os.path.isfile(tex_file_path):
                     if _Debug:
                         print(f'    loading texture {texture} from data/textures.res and unpacking into textures/')
-                    if not m.unpack_texture('data/textures.res', 'textures/model', texture):
-                        m.unpack_texture('data/redress.res', 'textures/model', texture)
+                    if not m.unpack_texture(res.data_path('data/textures.res'), res.data_path('textures/model'), texture):
+                        m.unpack_texture(res.data_path('data/redress.res'), res.data_path('textures/model'), texture)
                 if not single_texture:
                     textures[part_name] = texture
                     tex_file_path_source = resource_find(tex_file_path)
@@ -459,7 +459,7 @@ class Scene(object):
                 for texture_layer in combined_texture_hash_bases.keys():
                     combined_texture_hash = hashlib.md5(combined_texture_hash_bases[texture_layer].encode()).hexdigest()
                     combined_texture_file_name = f'{template}_{texture_layer}_{combined_texture_hash}'
-                    combined_tex_file_path = 'textures/combined/' + combined_texture_file_name + '.png'
+                    combined_tex_file_path = res.data_path('textures/combined/' + combined_texture_file_name + '.png')
                     if os.path.isfile(combined_tex_file_path):
                         if _Debug:
                             print(f'    found existing combined texture {combined_tex_file_path}')
@@ -475,7 +475,7 @@ class Scene(object):
                                 this_texture_layer = texture[-1]
                                 texture = texture[:-2]
                             if this_texture_layer == texture_layer:
-                                tex_file_path = 'textures/model/' + texture + '.png'
+                                tex_file_path = res.data_path('textures/model/' + texture + '.png')
                                 tex_image = Image.open(tex_file_path)
                                 image_combined.paste(tex_image, (0, 0))
                         for ordered_part_name in ordered_parts_list:
@@ -489,7 +489,7 @@ class Scene(object):
                                 if this_texture_layer != texture_layer:
                                     continue
                                 if part_name.startswith(ordered_part_name):
-                                    tex_file_path = 'textures/model/' + texture + '.png'
+                                    tex_file_path = res.data_path('textures/model/' + texture + '.png')
                                     tex_image = Image.open(tex_file_path)
                                     image_combined.paste(tex_image, (0, 0), tex_image.convert('RGBA'))
                                     break
@@ -512,7 +512,7 @@ class Scene(object):
                         texture_layer = texture[-1]
                         texture = texture[:-2]
                     textures_layers[part_name] = layers[texture_layer]
-                    materials[part_name] = {'map_Kd': 'textures/combined/' + layers[texture_layer] + '.png'}
+                    materials[part_name] = {'map_Kd': res.data_path('textures/combined/' + layers[texture_layer] + '.png')}
                 textures = textures_layers.copy()
             self.add_model_template(template, m)
         m = self.models[template]
@@ -553,10 +553,10 @@ class Scene(object):
             texture = o.textures[part_name] if part_name in o.textures else o.textures['*']
             material = materials[part_name] if part_name in materials else None
             if single_texture and not material:
-                if os.path.isfile('textures/combined/' + o.textures['*'] + '.png'):
-                    material = {'map_Kd': 'textures/combined/' + o.textures['*'] + '.png'}
+                if os.path.isfile(res.data_path('textures/combined/' + o.textures['*'] + '.png')):
+                    material = {'map_Kd': res.data_path('textures/combined/' + o.textures['*'] + '.png')}
                 else:
-                    material = {'map_Kd': 'textures/models/' + o.textures['*'] + '.png'}
+                    material = {'map_Kd': res.data_path('textures/models/' + o.textures['*'] + '.png')}
             if part_name not in hidden_parts:
                 mesh = None
                 if mesh_key in self.meshes_index:
