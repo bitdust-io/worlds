@@ -717,7 +717,7 @@ class LandData(object):
         self.towers = {}
 
     def load_tilemap_file(self, tilemap_file_name):
-        tiles_list = json.loads(open('assets/tiles.json', 'rt').read())
+        tiles_list = json.loads(open(res.data_path('assets/tiles.json'), 'rt').read())
         tiles_registry = {}
         for tile_info in tiles_list:
             catalog_id, mozaic_id, mozaic_pos = [int(i) for i in tile_info.split(' ')]

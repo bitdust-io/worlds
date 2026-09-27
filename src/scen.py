@@ -191,7 +191,7 @@ class Scene(object):
                 self.container_water_tiles.add(water_segment_rotate_x)
                 self.container_water_tiles.add(water_segment_rotate_z)
                 self.container_water_tiles.add(ChangeState(material_density=0.0, water_transparency=(128.0 / 255.0), group=water_segment_group_name))
-                self.container_water_tiles.add(BindTexture(source='assets/water8a.png', index=1, group=water_segment_group_name))
+                self.container_water_tiles.add(BindTexture(source=res.data_path('assets/water8a.png'), index=1, group=water_segment_group_name))
                 self.container_water_tiles.add(Mesh(
                     vertices=water_vertices,
                     indices=[0, 1, 2, 1, 3, 2],

@@ -33,6 +33,7 @@ from kivy.graphics import (
 
 import const
 import mth
+import res
 
 
 def ignore_undertouch(func):
@@ -50,7 +51,7 @@ class Renderer(Widget):
         self.app_root = app_root
         self.scene = scene
         self.canvas = RenderContext(compute_normal_mat=True)
-        self.canvas.shader.source = resource_find('assets/shader.glsl')
+        self.canvas.shader.source = resource_find('shader.glsl')
         self.camera_distance_scale_factor = const.SCALE_INITIAL
         self.camera_distance_to_center = const.CAMERA_DISTANCE_TO_CENTER_INITIAL
         self.camera_angle_y = float(const.ROTATE_VERTICAL_INITIAL)
@@ -112,7 +113,7 @@ class Renderer(Widget):
         self.sky_background_rotate_x = Rotate(0, 1, 0, 0, group='land')
         self.sky_background_translate = Translate(0, 0, 0, group='land')
         ChangeState(material_density=1.0)
-        sky_background_image = Image(source='assets/Cloudy_Sky-Night_04-1024x512.png')
+        sky_background_image = Image(source=res.data_path('assets/ski1.png'))
         sky_background_texture = sky_background_image.texture
         sky_background_texture.wrap = 'repeat'
         BindTexture(texture=sky_background_texture, index=1)
@@ -149,9 +150,8 @@ class Renderer(Widget):
     def update_canvas(self):
         win_w, win_h = Window.size
         asp = win_w / float(win_h)
-        if _Debug:
-            print(f'Renderer.update_canvas: win_w={win_w} win_h={win_h} asp={asp}')
-        # asp = self.width / float(self.height)
+        # if _Debug:
+        #     print(f'Renderer.update_canvas: win_w={win_w} win_h={win_h} asp={asp} win={Window.size} renderer={self.size}')
         if asp > 2.0:
             asp = 2.0
         if asp < 0.5:

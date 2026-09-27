@@ -29,7 +29,7 @@ clean: pyclean
 venv:
 	@$(PYTHON_VERSION) -m venv venv
 	@$(PIP) install --upgrade pip
-	@$(PIP) install -r $(REQUIREMENTS_TXT)
+	@PIP_NO_BINARY=kivy $(PIP) install -r $(REQUIREMENTS_TXT)
 
 run: venv
 	@$(PYTHON) src/main.py

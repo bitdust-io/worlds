@@ -10,7 +10,13 @@ _Debug = True
 
 
 ENCODE = "cp1251"
-_buf = ""
+ROOT_PATH = ''
+DATA_PATH = ''
+
+
+def data_path(data_path):
+    global DATA_PATH
+    return os.path.join(DATA_PATH, data_path)
 
 
 def read_byte(file, count=1):
@@ -496,6 +502,8 @@ def dicts(t):
     return {k: dicts(t[k]) for k in t}
 
 
+_buf = ""
+
 def generate_res_tree(t, depth = 0):
     global _buf
     for k in t.keys():
@@ -522,15 +530,17 @@ def build_res_yaml(filetree, f_name):
     return _buf
 
 
-def download_res_file(destination_dir, file_name, parts):
-    dest_file_path = os.path.join(destination_dir, file_name)
+def download_file(destination_dir, file_name, parts, url_prefix):
+    if not os.path.isdir(data_path(destination_dir)):
+        os.makedirs(data_path(destination_dir))
+    dest_file_path = os.path.join(data_path(destination_dir), file_name)
     if os.path.isfile(dest_file_path):
         return dest_file_path
     chunk_size = 4096
     progress = 0
     downloaded = 0
-    # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'
-    url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'
+    if not parts:
+        parts = [file_name, ]
     for part in parts:
         document_url = url_prefix + part
         with requests.get(document_url, stream=True) as r:

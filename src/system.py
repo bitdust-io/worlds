@@ -69,25 +69,25 @@ def is_mobile():
 
 def get_app_data_path():
     """
-    A portable method to get the default data folder location, usually it is: "~/.bitdust/"
+    A portable method to get the default data folder location, usually it is: "~/.worlds/"
     """
     if is_windows():
-        return os.path.join(os.path.expanduser('~'), '.bitdust')
+        return os.path.join(os.path.expanduser('~'), '.worlds')
 
     elif is_linux():
-        return os.path.join(os.path.expanduser('~'), '.bitdust')
+        return os.path.join(os.path.expanduser('~'), '.worlds')
 
     elif is_android():
         from android.storage import app_storage_path  # @UnresolvedImport
-        return os.path.join(app_storage_path(), '.bitdust')
+        return os.path.join(app_storage_path(), '.worlds')
 
     elif is_osx():
-        return os.path.join(os.path.expanduser('~'), '.bitdust')
+        return os.path.join(os.path.expanduser('~'), '.worlds')
 
     elif is_ios():
-        return os.path.join(os.path.expanduser('~'), 'Documents', '.bitdust')
+        return os.path.join(os.path.expanduser('~'), 'Documents', '.worlds')
 
-    return os.path.join(os.path.expanduser('~'), '.bitdust')
+    return os.path.join(os.path.expanduser('~'), '.worlds')
 
 
 def get_downloads_dir():
