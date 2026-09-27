@@ -2,13 +2,11 @@ import os
 import sys
 import json
 
-import system
-
 _Debug = True
 
+import system
 
 ROOT_PATH = ''
-
 if system.is_android():
     ROOT_PATH = os.path.abspath(os.environ['ANDROID_ARGUMENT'])
 elif system.is_osx():
@@ -18,16 +16,19 @@ elif system.is_ios():
 else:
     ROOT_PATH = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
 
-
 from kivy.config import Config
 Config.set('graphics', 'top', '100')
 Config.set('graphics', 'left', '100')
 Config.set('graphics', 'width', '1400')
 Config.set('graphics', 'height', '700')
 
-
-from kivy.core.window import Window
+from kivy.clock import Clock
 from kivy.app import App
+from kivy.core.window import Window
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.progressbar import ProgressBar
+from kivy.uix.popup import Popup
+from kivy.uix.label import Label
 
 import res
 import rend
@@ -40,17 +41,73 @@ class WorldsApp(App):
     known_templates = {}
     known_figures_parts = {}
 
-    def __init__(self, **kwargs):
-        self.root_path = ROOT_PATH
-        self.data_path = system.get_app_data_path()
-        res.DATA_PATH = self.data_path
-        if _Debug:
-            print('WorldsApp.__init__ root_path=%r data_path=%r' % (self.root_path, self.data_path))
-        if not os.path.exists(self.data_path):
-            os.makedirs(self.data_path)
-        super().__init__(**kwargs)
-
     def build(self):
+        # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'
+        # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'
+        self.inventory_list = [
+            ('data', 'figures.res', ['figures_res_0', 'figures_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
+            ('data', 'textures.res', ['textures_res_0', 'textures_res_1', 'textures_res_2', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
+            ('data', 'redress.res', ['redress_res_0', 'redress_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
+            ('catalog', 'animations.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'armors.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'buildings.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'figures.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'figures_names.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'figures_parts.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'figures_samples.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'materials.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'plants.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'textures.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('catalog', 'weapons.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
+            ('assets', 'water1.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'sky1.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            # TODO: the following needs to move from "assets" to "map" sub dir
+            ('assets', 'tiles.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'catalog.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'map.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'heightmap.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'encoded.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'plants.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+            ('assets', 'buildings.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/'),
+        ]
+        for i in range(0, 29):
+            self.inventory_list.append(('assets/land', f'{i}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/land/'))
+        self.downloading_list = []
+        for folder, file_name, file_parts, url_prefix in self.inventory_list:
+            dest_file_path = os.path.join(res.data_path(folder), file_name)
+            if os.path.isfile(dest_file_path):
+                if _Debug:
+                    print(f'{dest_file_path}')
+                continue
+            self.downloading_list.append((folder, file_name, file_parts, url_prefix))
+        self.root = BoxLayout()
+        self.downloading_popup = None
+        if not self.downloading_list:
+            Clock.schedule_once(self.do_start)
+            return self.root
+        self.downloading_list = self.inventory_list
+        self.progress_bar = ProgressBar(value=0, max=len(self.downloading_list), height=32, size_hint=(1, None))
+        self.downloading_popup = Popup(title='Downloading', separator_height=0, content=self.progress_bar, size_hint=(0.8, 0.2), auto_dismiss=False)
+        self.downloading_popup.open()
+        Clock.schedule_once(self.do_download_next_file)
+        return self.root
+
+    def do_download_next_file(self, dt):
+        folder, file_name, file_parts, url_prefix = self.downloading_list.pop(0)
+        if _Debug:
+            print(f'downloading {folder}/{file_name} from {url_prefix}')
+        Clock.schedule_once(lambda _: res.download_file(folder, file_name, file_parts, url_prefix, callback=self.on_file_downloaded))
+
+    def on_file_downloaded(self, file_path):
+        self.progress_bar.value += 1
+        Clock.schedule_once(self.do_download_next_file if self.downloading_list else self.do_start)
+
+    def do_start(self, dt):
+        if self.downloading_popup:
+            self.downloading_popup.dismiss()
+        if _Debug:
+            print('starting app')
+        self.root.clear_widgets()
         catalog = dat.CatalogData()
         catalog.load_figures(figures_file_name=res.data_path('catalog/figures.json'))
         catalog.load_animations(animations_file_name=res.data_path('catalog/animations.json'))
@@ -92,37 +149,16 @@ class WorldsApp(App):
             weapon='cheat dagger.bronze',
             # elevation_correction=0.5,
         )
-        return renderer
+        self.root.add_widget(renderer)
 
 
 def main():
-    # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'
-    # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'
-    res.download_file('data', 'figures.res', ['figures_res_0', 'figures_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/')
-    res.download_file('data', 'textures.res', ['textures_res_0', 'textures_res_1', 'textures_res_2', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/')
-    res.download_file('data', 'redress.res', ['redress_res_0', 'redress_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/')
-    res.download_file('catalog', 'animations.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'armors.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'buildings.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'figures.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'figures_names.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'figures_parts.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'figures_samples.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'materials.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'plants.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'textures.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    res.download_file('catalog', 'weapons.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/')
-    for i in range(0, 28):
-        res.download_file('assets/land', f'{i}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/land/')
-    res.download_file('assets', 'water8a.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    # TODO: the following needs to move from "assets" to "map" sub dir
-    res.download_file('assets', 'tiles.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'catalog.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'map.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'heightmap.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'encoded.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'plants.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
-    res.download_file('assets', 'buildings.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/')
+    res.DATA_PATH = system.get_app_data_path()
+    if _Debug:
+        print(f'data path: {res.DATA_PATH}')
+        print(f'root path: {ROOT_PATH}')
+    if not os.path.exists(res.DATA_PATH):
+        os.makedirs(res.DATA_PATH)
     WorldsApp().run()
 
 

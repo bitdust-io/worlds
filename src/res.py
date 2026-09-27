@@ -530,11 +530,14 @@ def build_res_yaml(filetree, f_name):
     return _buf
 
 
-def download_file(destination_dir, file_name, parts, url_prefix):
-    if not os.path.isdir(data_path(destination_dir)):
-        os.makedirs(data_path(destination_dir))
-    dest_file_path = os.path.join(data_path(destination_dir), file_name)
+def download_file(destination_dir, file_name, parts, url_prefix, callback=None):
+    dest_dir = data_path(destination_dir)
+    if not os.path.isdir(dest_dir):
+        os.makedirs(dest_dir)
+    dest_file_path = os.path.join(dest_dir, file_name)
     if os.path.isfile(dest_file_path):
+        if callback:
+            callback(dest_file_path)
         return dest_file_path
     chunk_size = 4096
     progress = 0
@@ -554,3 +557,6 @@ def download_file(destination_dir, file_name, parts, url_prefix):
                             progress -= 10 * 1024 * 1024
                             if _Debug:
                                 print(f"Downloading {file_name}: {downloaded} bytes")
+    if callback:
+        callback(dest_file_path)
+    return dest_file_path
