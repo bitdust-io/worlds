@@ -98,19 +98,19 @@ fullscreen = 0
 android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_MEDIA_AUDIO,DOWNLOAD_WITHOUT_NOTIFICATION,POST_NOTIFICATIONS,CAMERA
 
 # (int) Target Android API, should be as high as possible.
-# android.api = 36
+android.api = 36
 
 # (int) Minimum API your APK will support.
-# android.minapi = 24
+android.minapi = 24
 
 # (int) Android SDK version to use
 # android.sdk = 22
 
 # (str) Android NDK version to use
-# android.ndk = 25b
+android.ndk = 28c
 
 # (int) Android NDK API to use. This is the minimum API your app will support, it should usually match android.minapi.
-# android.ndk_api = 24
+android.ndk_api = 24
 
 # (bool) Use --private data storage (True) or --dir public storage (False)
 # android.private_storage = True
@@ -189,6 +189,28 @@ android.accept_sdk_license = True
 # bootstrap)
 #android.gradle_dependencies =
 
+# (bool) Enable AndroidX support. Enable when 'android.gradle_dependencies'
+# contains an 'androidx' package, or any package from Kotlin source.
+# android.enable_androidx requires android.api >= 28
+#android.enable_androidx = True
+
+# (list) add java compile options
+# this can for example be necessary when importing certain java libraries using the 'android.gradle_dependencies' option
+# see https://developer.android.com/studio/write/java8-support for further information
+# android.add_compile_options = "sourceCompatibility = 1.8", "targetCompatibility = 1.8"
+
+# (list) Gradle repositories to add can be necessary for some android.gradle_dependencies
+# please enclose in double quotes 
+# e.g. android.gradle_repositories = "maven  url 'https://repo.spring.io/release' "
+#android.add_gradle_repositories =
+
+# (list) packaging options to add
+# see https://developer.android.com/reference/tools/gradle-api/7.1/com/android/build/api/dsl/PackagingOptions
+# can be necessary to solve conflicts in gradle_dependencies
+# please enclose in double quotes 
+# e.g. android.add_packaging_options = "exclude 'META-INF/common.kotlin_module'", "exclude 'META-INF/*.kotlin_module'"
+#android.add_packaging_options =
+
 # (list) Java classes to add as activities to the manifest.
 # android.add_activites = org.eiworlds.eiworlds.EIWorldsActivity
 # android.add_activites = org.kivy.android.PythonActivity
@@ -234,20 +256,49 @@ android.allow_backup = True
 # (list) Android shared libraries which will be added to AndroidManifest.xml using <uses-library> tag
 #android.uses_library =
 
+# (bool) Android logcat only display log for activity's pid
+#android.logcat_pid_only = False
+
 # (str) Android logcat filters to use
-android.logcat_filters = *:S python:D EIWorldsnode:D
+android.logcat_filters = *:S python:D
 
 # (bool) Copy library instead of making a libpymodules.so
 #android.copy_libs = 1
 
 # (str) The Android arch to build for, choices: arm64-v8a, x86_64
-# android.arch = armeabi-v7a
 # android.arch = x86_64
+# android.arch = armeabi-v7a
 # android.arch = arm64-v8a
 # android.archs = arm64-v8a, x86_64
+# android.archs = arm64-v8a, armeabi-v7a
+{android_arch}
 
 # (str) The format used to package the app for release mode (aab or apk).
+android.release_artifact = {release_artifact}
+
+# (str) XML file for custom backup rules (see official auto backup documentation)
+# android.backup_rules =
+
+# (str) If you need to insert variables into your AndroidManifest.xml file,
+# you can do so with the manifestPlaceholders property.
+# This property takes a map of key-value pairs. (via a string)
+# Usage example : android.manifest_placeholders = [myCustomUrl:\"org.kivy.customurl\"]
+# android.manifest_placeholders = [:]
+
+# (bool) Skip byte compile for .py files
+# android.no-byte-compile-python = False
+
+# (str) The format used to package the app for release mode (aab or apk or aar).
 # android.release_artifact = aab
+
+# (str) The format used to package the app for debug mode (apk or aar).
+# android.debug_artifact = apk
+
+# (str) A display cutout is an area on some devices that extends into the display surface.
+# It allows for an edge-to-edge experience while providing space for important sensors on the front of the device.
+# Available options for Android API >= 28 are "default, shortEdges, never" and defaults to never.
+# Android documentation: https://developer.android.com/develop/ui/views/layout/display-cutout
+#android.display_cutout = never
 
 
 #
@@ -261,19 +312,22 @@ android.logcat_filters = *:S python:D EIWorldsnode:D
 # p4a.branch = master
 # master
 # v2019.08.09
+# p4a.branch = v2026.05.09
+# p4a.commit = 17bf5322791ec8cec85836fbe906e63664a05445
 p4a.branch = develop
+p4a.commit = ae32615f
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
-p4a.source_dir = ../cache/python-for-android
+# p4a.source_dir = ../cache/python-for-android
 
 # (str) The directory in which python-for-android should look for your own build recipes (if any)
-# p4a.local_recipes = ./recipes/
+p4a.local_recipes = ./recipes/
 
 # (str) Filename to the hook for p4a
 #p4a.hook =
 
 # (str) Bootstrap to use for android builds
-p4a.bootstrap = sdl3
+# p4a.bootstrap = sdl2
 # p4a.bootstrap = webview
 
 # (int) port number to specify an explicit --port= p4a argument (eg for bootstrap flask)

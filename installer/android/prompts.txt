@@ -1,0 +1,31 @@
+
+In this folder I have build_log.txt file. Go from the bottom of the file and look for issues during compilation. Identify, propose a solution
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh run. Go from the bottom of the file and look for issues during compilation. Identify issues. Propose a solution. 
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh run. Go from the bottom of the file and look for issues during compilation. Identify issues. Propose a solution. Do not look at python-for-android version or try to change any source files of it. 
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh run. Go from the bottom of the file and look for issues during compilation. Identify issues. Do not look at python-for-android version or try to change any source files of it. Look at the do_build.sh file and propose changes in that file so I can run it again and get build succeed.
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh run. Go from the bottom of the file and look for issues during compilation. Identify issues. Do not look at python-for-android version or try to change any source files of it. Look at the do_build.sh file and propose changes in that file so I can run it again and get build succeed.
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh script run. Go from the bottom of the file and look for issues during compilation. Identify issues. Do not look at python-for-android version or try to change any source files of it. Look at the do_build.sh file. Identify issue during execution or a potential fix that can be added in the script that would resolve compilation issues. Create a copy of the do_build.sh file where those fixes are added. Execute that new shell file and send output to a new log file : sh do_build_1.sh 1>build_log_2.txt 2>&1 
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh script run. Go from the bottom of the file and look for issues during compilation. Identify issues. Do not look at python-for-android version or try to change any source files of it. Look at the do_build.sh file. Identify issue during execution or a potential fix that can be added in the script that would resolve compilation issues. Create a copy of the do_build.sh file where those fixes are implemented. Execute that new shell file and send output to a new log file : sh do_build_2.sh 1>build_log_2.txt 2>&1  After that do another iteration - check the build_log_2.txt file from the bottom and identify new issues again. Do 5 such iterations every time creating new shell script and new log file. When build succeed and .APK file created - stop right away.
+
+
+In this folder find build_log.txt file. This file is a log output from the do_build.sh script run. Go from the bottom of the file and look for issues during compilation. Identify issues. Do not look at python-for-android version or try to change any source files of it. Look at the do_build.sh file. Identify issue during execution or a potential fix that can be added in the script that would resolve compilation issues. Create a copy of the do_build.sh file where those fixes are implemented. You can also directly modify buildozer.spec file in that folder if necessary to resolve issues. Execute the newly created do_build_2.sh script file and send output to a new log file : sh do_build_2.sh 1>build_log_2.txt 2>&1  After that do another iteration - check the build_log_2.txt file from the bottom and identify new issues again. Do 10 such iterations every time creating new shell script and new log file and modifying buildozer.spec when necessary. When build succeed and .APK file created - stop right away. I give permission to create, modify and execute the mentioned files in that folder. Do not ask questions when you run the next iteration.
+
+
+
+
+In this folder find build_failed.log file. This file is a log output from the "make full_clean; make debug" execution. Go from the bottom of the log file and look for issues during build. Identify issues. Study source code in that repository. Study source code of the python-for-android and buildozer repositories. Propose a solution. I can use any Python version. I can use aby p4a branch or commit. I can use any api or ndk, but it is better to use higher api versions if possible to pass Google review requrements. I can do any changes in the buildozer configuration files if necessary.
+
+
+Check crush.txt file. This is a log from my Android device where i ran the .APK built with my scripts. Investigate issues. Study source code in that repository. Study source code of the python-for-android and buildozer repositories. I can use any Python version. I can use aby p4a branch or commit. I can use any api or ndk, but it is better to use higher api versions if possible to pass Google review requrements. I can do any changes in the buildozer configuration files if necessary. Propose a solution.
