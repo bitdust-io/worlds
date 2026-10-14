@@ -198,35 +198,6 @@ class ModelData(object):
         self.bones = {}
         self.animations = {}
 
-    def scan_figures_data(self, figures_res_file_path):
-        items = {}
-        with open(figures_res_file_path, 'rb') as figures_file:
-            res_filetree_dict = res.read_res_filetree(figures_file, return_dict=True)
-            for k in res_filetree_dict.keys():
-                ext = k[-4:].lower().replace('.', '')
-                if ext not in items:
-                    items[ext] = []
-                items[ext].append(k[:-4])
-        return items
-
-    def unpack_texture(self, texture_res_file_path, destination_dir, name):
-        if not os.path.isdir(destination_dir):
-            os.makedirs(destination_dir)
-        with open(texture_res_file_path, 'rb') as texture_file:
-            res_filetree_dict = res.read_res_filetree(texture_file, return_dict=True)
-            for k in res_filetree_dict.keys():
-                if k.lower().endswith('.mmp') and k[:-4].lower() == name.lower():
-                    mmp_file_path = os.path.join(destination_dir, name.lower() + '.mmp')
-                    png_file_path = os.path.join(destination_dir, name.lower() + '.png')
-                    res.unpack_res_element(texture_file, res_filetree_dict[k], dest_file_name=mmp_file_path)
-                    pil_img = res.read_mmp(mmp_file_path)
-                    pil_img.save(png_file_path)
-                    os.remove(mmp_file_path)
-                    if _Debug:
-                        print(f'unpacked texture {name} to {png_file_path}')
-                    return png_file_path
-        return None
-
     def load_figure_data(self, figure_dir_path, template):
         lnk_file_path = os.path.join(figure_dir_path, template + '.lnk')
         if not os.path.isfile(lnk_file_path):
@@ -913,28 +884,26 @@ class LandData(object):
 def main():
     cmd = sys.argv[1]
     if cmd.startswith('list_') and len(sys.argv) > 2:
-        md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         print('\n'.join(sorted(st[sys.argv[1].replace('list_', '')])))
     elif cmd.startswith('show_') and len(sys.argv) > 3:
-        md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         print('\n'.join(sorted(st[sys.argv[1].replace('show_', '')])))
     elif cmd == 'list' and len(sys.argv) == 3:
-        md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         print('\n'.join(sorted(st.keys())))
     elif cmd == 'list_models':
-        md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         print('\n'.join(sorted(st['mod'])))
+    elif cmd == 'scan_textures':
+        ls = res.scan_textures_data(sys.argv[2])
+        print('\n'.join(sorted(ls)))
     elif cmd == 'list_figures':
-        md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         print('\n'.join(sorted(st['fig'])))
     elif cmd == 'unpack_models':
         md = ModelData()
-        st = md.scan_figures_data(sys.argv[2])
+        st = res.scan_figures_data(sys.argv[2])
         lst = sorted(st['mod'])
         for m in lst:
             print(f'loading {m}')

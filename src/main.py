@@ -1,8 +1,13 @@
 import os
 import sys
 import json
+import random
 
 _Debug = True
+
+os.environ['KIVY_WINDOW'] = 'sdl2'
+os.environ['KIVY_TEXT'] = 'sdl2'
+os.environ['KIVY_IMAGE'] = 'sdl2'
 
 import system
 
@@ -22,13 +27,18 @@ Config.set('graphics', 'left', '100')
 Config.set('graphics', 'width', '1400')
 Config.set('graphics', 'height', '700')
 
+if system.is_android():
+    Config.set('kivy', 'keyboard_mode', 'managed')
+
 from kivy.clock import Clock
 from kivy.app import App
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.popup import Popup
 from kivy.uix.label import Label
+from kivy.uix.button import Button
 
 import res
 import rend
@@ -42,12 +52,16 @@ class WorldsApp(App):
     known_figures_parts = {}
 
     def build(self):
+        if system.is_android():
+            Window.keyboard_mode = 'managed'
+        # Window.bind(on_request_close=self.on_request_close)
         # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'
         # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'
         self.inventory_list = [
             ('data', 'figures.res', ['figures_res_0', 'figures_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
             ('data', 'textures.res', ['textures_res_0', 'textures_res_1', 'textures_res_2', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
             ('data', 'redress.res', ['redress_res_0', 'redress_res_1', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'),
+            ('data', 'textures2.res', ['textures_res_0', 'textures_res_1', 'textures_res_2', ], 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'),
             ('catalog', 'animations.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
             ('catalog', 'armors.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
             ('catalog', 'buildings.json', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/catalog/'),
@@ -72,6 +86,8 @@ class WorldsApp(App):
         ]
         for i in range(0, 29):
             self.inventory_list.append(('assets/land', f'{i}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/land/'))
+        for tex in ['flag_east', 'flag_north', 'flag_south', 'flag_undead', ]:
+            self.inventory_list.append(('textures/model', f'{tex}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/flags/'))
         self.downloading_list = []
         for folder, file_name, file_parts, url_prefix in self.inventory_list:
             dest_file_path = os.path.join(res.data_path(folder), file_name)
@@ -80,7 +96,7 @@ class WorldsApp(App):
                     print(f'{dest_file_path}')
                 continue
             self.downloading_list.append((folder, file_name, file_parts, url_prefix))
-        self.root = BoxLayout()
+        self.root = FloatLayout()
         self.downloading_popup = None
         if not self.downloading_list:
             Clock.schedule_once(self.do_start)
@@ -89,24 +105,37 @@ class WorldsApp(App):
         self.progress_bar = ProgressBar(value=0, max=len(self.downloading_list), height=32, size_hint=(1, None))
         self.downloading_popup = Popup(title='Downloading', separator_height=0, content=self.progress_bar, size_hint=(0.8, 0.2), auto_dismiss=False)
         self.downloading_popup.open()
-        Clock.schedule_once(self.do_download_next_file)
+        self.task = Clock.schedule_once(self.do_download_next_file)
         return self.root
+
+    def on_request_close(self, *args):
+        if self.task:
+            self.task.cancel()
+            self.task = None
+        return True
 
     def do_download_next_file(self, dt):
         folder, file_name, file_parts, url_prefix = self.downloading_list.pop(0)
         if _Debug:
             print(f'downloading {folder}/{file_name} from {url_prefix}')
-        Clock.schedule_once(lambda _: res.download_file(folder, file_name, file_parts, url_prefix, callback=self.on_file_downloaded))
+        self.task = Clock.schedule_once(lambda _: res.download_file(folder, file_name, file_parts, url_prefix, callback=self.on_file_downloaded))
 
     def on_file_downloaded(self, file_path):
         self.progress_bar.value += 1
-        Clock.schedule_once(self.do_download_next_file if self.downloading_list else self.do_start)
+        if self.downloading_list:
+            delay = 0
+            if file_path:
+                delay = random.randint(1, 3)
+            self.task = Clock.schedule_once(self.do_download_next_file, delay)
+        else:
+            self.task = None
+            if self.downloading_popup:
+                self.downloading_popup.dismiss()
+            Clock.schedule_once(self.do_start)
 
     def do_start(self, dt):
-        if self.downloading_popup:
-            self.downloading_popup.dismiss()
         if _Debug:
-            print('starting app')
+            print('starting the app')
         self.root.clear_widgets()
         catalog = dat.CatalogData()
         catalog.load_figures(figures_file_name=res.data_path('catalog/figures.json'))
@@ -150,6 +179,12 @@ class WorldsApp(App):
             # elevation_correction=0.5,
         )
         self.root.add_widget(renderer)
+        overlay_button = Button(
+            text="OK",
+            size_hint=(0.1, 0.1),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
+        self.root.add_widget(overlay_button)
 
 
 def main():
