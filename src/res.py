@@ -377,6 +377,53 @@ def unpack_res_element(file, element, dest_file_name=None):
     return dest_file_name
 
 
+def scan_figures_data(figures_res_file_path):
+    items = {}
+    with open(figures_res_file_path, 'rb') as figures_file:
+        res_filetree_dict = read_res_filetree(figures_file, return_dict=True)
+        for k in res_filetree_dict.keys():
+            ext = k[-4:].lower().replace('.', '')
+            if ext not in items:
+                items[ext] = []
+            items[ext].append(k[:-4])
+    return items
+
+
+def scan_textures_data(texture_res_file_path):
+    lst = []
+    with open(texture_res_file_path, 'rb') as texture_file:
+        res_filetree_dict = read_res_filetree(texture_file, return_dict=True)
+        for k in res_filetree_dict.keys():
+            if k.lower().endswith('.mmp'):
+                name = k[:-4].lower()
+                if name not in lst:
+                    lst.append(name)
+    return lst
+
+
+def unpack_texture(texture_res_file_path, destination_dir, name):
+    if not os.path.isdir(destination_dir):
+        os.makedirs(destination_dir)
+    if _Debug:
+        print(f'    unpacking texture {name} from {texture_res_file_path} into {destination_dir}')
+    with open(texture_res_file_path, 'rb') as texture_file:
+        res_filetree_dict = read_res_filetree(texture_file, return_dict=True)
+        for k in res_filetree_dict.keys():
+            if k.lower().endswith('.mmp') and k[:-4].lower() == name.lower():
+                mmp_file_path = os.path.join(destination_dir, name.lower() + '.mmp')
+                png_file_path = os.path.join(destination_dir, name.lower() + '.png')
+                unpack_res_element(texture_file, res_filetree_dict[k], dest_file_name=mmp_file_path)
+                pil_img = read_mmp(mmp_file_path)
+                pil_img.save(png_file_path)
+                os.remove(mmp_file_path)
+                if _Debug:
+                    print(f'unpacked texture {name} to {png_file_path}')
+                return png_file_path
+    if _Debug:
+        print(f'WARNING texture {name} was not found at in {texture_res_file_path}')
+    return None
+
+
 def extract_color(pixel, mask, shift, count):
     return int(0.5 + 255 * ((pixel & mask) >> shift) / (mask >> shift))
 

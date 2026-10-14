@@ -7,9 +7,12 @@ ifeq ($(PYTHON_VERSION),)
 endif
 
 REQUIREMENTS_TXT:=requirements.txt
+REQUIREMENTS_TOOLS_TXT:=requirements_tools.txt
 OS=$(shell lsb_release -si 2>/dev/null || uname)
 PIP:="venv/bin/pip3"
 PYTHON="venv/bin/python3"
+PIP_TOOLS:="venv_tools/bin/pip3"
+PYTHON_TOOLS="venv_tools/bin/python3"
 
 .DEFAULT_GOAL := venv
 
@@ -28,8 +31,15 @@ clean: pyclean
 
 venv:
 	@$(PYTHON_VERSION) -m venv venv
+	@$(PIP) install --upgrade pip setuptools wheel cython
+	@$(PIP) install kivy[base]==2.3.1 --no-cache-dir
+	@$(PIP) install -r $(REQUIREMENTS_TXT)
+	@# PIP_NO_BINARY=kivy $(PIP) install -r $(REQUIREMENTS_TXT)
+
+venv_tools:
+	@$(PYTHON_VERSION) -m venv venv_tools
 	@$(PIP) install --upgrade pip
-	@PIP_NO_BINARY=kivy $(PIP) install -r $(REQUIREMENTS_TXT)
+	@$(PIP) install -r $(REQUIREMENTS_TOOLS_TXT)
 
 run: venv
 	@$(PYTHON) src/main.py
@@ -37,7 +47,7 @@ run: venv
 ei_models_scan:
 	@if [ ! -d "./repack/EIrepack" ]; then git clone --depth=1 https://github.com/aspadm/EIrepack.git ./repack/EIrepack; fi
 	@cp -v tools/scan_models.py repack/EIrepack/
-	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:." ../../venv/bin/python3 scan_models.py ${SRC_DIR}/Maps/
+	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:." ../../venv_tools/bin/python3 scan_models.py ${SRC_DIR}/Maps/
 	@mv -v repack/EIrepack/figures_names.json catalog/
 	@mv -v repack/EIrepack/textures.json catalog/
 
@@ -45,7 +55,7 @@ ei_res_unpack:
 	@if [ ! -d "./repack/EIrepack" ]; then git clone --depth=1 https://github.com/aspadm/EIrepack.git ./repack/EIrepack; fi
 	@cp -v tools/unpack_all.py repack/EIrepack/Converters/
 	@cp -v tools/convert_model.py repack/EIrepack/Converters/
-	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:." ../../venv/bin/python3 Converters/unpack_all.py ${SRC_DIR} ${UNPACK_DIR} --verbose
+	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:." ../../venv_tools/bin/python3 Converters/unpack_all.py ${SRC_DIR} ${UNPACK_DIR} --verbose
 	@mv -v repack/EIrepack/figures.json catalog/
 	@mv -v repack/EIrepack/figures_parts.json catalog/
 	@mv -v repack/EIrepack/figures_samples.json catalog/
@@ -56,18 +66,18 @@ ei_figures_scan:
 	@if [ ! -d "./repack/EIrepack" ]; then git clone --depth=1 https://github.com/aspadm/EIrepack.git ./repack/EIrepack; fi
 	@cp -v tools/scan_figures.py repack/EIrepack/
 	@cp -v catalog/figures.json repack/EIrepack/
-	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv/bin/python3 scan_figures.py ${UNPACK_DIR}/Res/figures/
+	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv_tools/bin/python3 scan_figures.py ${UNPACK_DIR}/Res/figures/
 	@mv -v repack/EIrepack/figures.json catalog/
 
 ei_db_scan:
 	@if [ ! -d "./repack/EIrepack" ]; then git clone --depth=1 https://github.com/aspadm/EIrepack.git ./repack/EIrepack; fi
 	@cp -v tools/extract_db_data.py repack/EIrepack/
-	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv/bin/python3 extract_db_data.py ${UNPACK_DIR}/Res/database/
+	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv_tools/bin/python3 extract_db_data.py ${UNPACK_DIR}/Res/database/
 
 ei_compile:
 	@if [ ! -d "./repack/EIrepack" ]; then git clone --depth=1 https://github.com/aspadm/EIrepack.git ./repack/EIrepack; fi
 	@cp -v tools/compile_data.py repack/EIrepack/
-	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv/bin/python3 compile_data.py
+	@cd repack/EIrepack/ && PYTHONPATH="${PYTHONPATH}:Formats:Converters:." ../../venv_tools/bin/python3 compile_data.py
 	@mv -v repack/EIrepack/armors.json catalog/
 	@mv -v repack/EIrepack/weapons.json catalog/
 	@mv -v repack/EIrepack/materials.json catalog/
@@ -75,8 +85,8 @@ ei_compile:
 
 tiles_build:
 	@rm -rf ${RES_DIR}/merged_hq/*
-	@samples_dir="${RES_DIR}/samples_hq/" venv/bin/python3 src/tiles.py merge_tiles ${RES_DIR}/shapes_hq/ ${RES_DIR}/groups_hq/ ${RES_DIR}/merged_hq/ ${RES_DIR}/ready_hq/
-	@venv/bin/python3 src/tiles.py pack_tiles ${RES_DIR}/ready_hq/ ./assets/land/
+	@samples_dir="${RES_DIR}/samples_hq/" venv_tools/bin/python3 src/tiles.py merge_tiles ${RES_DIR}/shapes_hq/ ${RES_DIR}/groups_hq/ ${RES_DIR}/merged_hq/ ${RES_DIR}/ready_hq/
+	@venv_tools/bin/python3 src/tiles.py pack_tiles ${RES_DIR}/ready_hq/ ./assets/land/
 
 fmg_clean:
 	@rm -rf fmg/Fantasy-Map-Generator
@@ -99,5 +109,5 @@ fmg_generate:
 
 land_build:
 	@rm -rfv assets/tiles.png
-	@venv/bin/python src/land.py map.json 512 512
+	@venv_tools/bin/python src/land.py map.json 512 512
 	@open assets/minimap.png

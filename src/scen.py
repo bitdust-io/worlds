@@ -33,7 +33,7 @@ import unt
 import hero
 
 
-_Debug = False
+_Debug = True
 
 _NextUnitID = 0
 _NextObjectID = 0
@@ -322,16 +322,18 @@ class Scene(object):
         # } else {
         #     1.0
         # }
-
         _NextMeshID += 1
         name = prefix + '_' + str(_NextMeshID)
         if material is None:
             if texture:
                 tex_path = res.data_path('textures/model/' + texture + '.png')
-                if os.path.isfile(tex_path):
-                    material = {'map_Kd': tex_path}
-                else:
+                if not os.path.isfile(tex_path):
+                    if not res.unpack_texture(res.data_path('data/textures.res'), res.data_path('textures/model'), texture):
+                        if not res.unpack_texture(res.data_path('data/textures2.res'), res.data_path('textures/model'), texture):
+                            res.unpack_texture(res.data_path('data/redress.res'), res.data_path('textures/model'), texture)
+                if not os.path.isfile(tex_path):
                     raise Exception(f'figure prefix={prefix} texture={texture} not found at {tex_path}')
+                material = {'map_Kd': tex_path}
         mesh = dat.MeshData(
             name=name,
             material=material,
@@ -421,9 +423,9 @@ class Scene(object):
                 if not os.path.isfile(tex_file_path):
                     if _Debug:
                         print(f'    loading texture {texture} from data/textures.res and unpacking into textures/')
-                    if not m.unpack_texture(res.data_path('data/textures.res'), res.data_path('textures/model'), texture):
-                        if not m.unpack_texture(res.data_path('data/textures2.res'), res.data_path('textures/model'), texture):
-                            m.unpack_texture(res.data_path('data/redress.res'), res.data_path('textures/model'), texture)
+                    if not res.unpack_texture(res.data_path('data/textures.res'), res.data_path('textures/model'), texture):
+                        if not res.unpack_texture(res.data_path('data/textures2.res'), res.data_path('textures/model'), texture):
+                            res.unpack_texture(res.data_path('data/redress.res'), res.data_path('textures/model'), texture)
                 if not single_texture:
                     textures[part_name] = texture
                     tex_file_path_source = resource_find(tex_file_path)
