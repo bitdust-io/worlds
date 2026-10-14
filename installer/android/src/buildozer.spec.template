@@ -52,7 +52,7 @@ requirements = {requirements}
 # icon.filename = eiworlds.png
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
-orientation = portrait
+orientation = landscape
 
 # (list) List of service to declare
 # services = Eiworldsnode:./service/main.py:foreground
@@ -79,7 +79,7 @@ orientation = portrait
 # android.apptheme = "@android:style/Theme.NoTitleBar"
 
 # (bool) Indicate if the application should be fullscreen or not
-fullscreen = 0
+fullscreen = 1
 
 # (string) Presplash background color (for new android toolchain)
 # Supported formats are: #RRGGBB #AARRGGBB or one of the following names:

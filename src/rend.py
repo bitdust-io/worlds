@@ -3,7 +3,7 @@ import sys
 import math
 import random
 
-_Debug = True
+_Debug = False
 
 
 from kivy.base import EventLoop

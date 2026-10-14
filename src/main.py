@@ -27,13 +27,18 @@ Config.set('graphics', 'left', '100')
 Config.set('graphics', 'width', '1400')
 Config.set('graphics', 'height', '700')
 
+if system.is_android():
+    Config.set('kivy', 'keyboard_mode', 'managed')
+
 from kivy.clock import Clock
 from kivy.app import App
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.popup import Popup
 from kivy.uix.label import Label
+from kivy.uix.button import Button
 
 import res
 import rend
@@ -47,6 +52,8 @@ class WorldsApp(App):
     known_figures_parts = {}
 
     def build(self):
+        if system.is_android():
+            Window.keyboard_mode = 'managed'
         # Window.bind(on_request_close=self.on_request_close)
         # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/eng2001/res/'
         # url_prefix = 'https://raw.githubusercontent.com/eigamer/ei/refs/heads/main/astral2006/res/'
@@ -87,7 +94,7 @@ class WorldsApp(App):
                     print(f'{dest_file_path}')
                 continue
             self.downloading_list.append((folder, file_name, file_parts, url_prefix))
-        self.root = BoxLayout()
+        self.root = FloatLayout()
         self.downloading_popup = None
         if not self.downloading_list:
             Clock.schedule_once(self.do_start)
@@ -170,6 +177,12 @@ class WorldsApp(App):
             # elevation_correction=0.5,
         )
         self.root.add_widget(renderer)
+        overlay_button = Button(
+            text="OK",
+            size_hint=(0.1, 0.1),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
+        self.root.add_widget(overlay_button)
 
 
 def main():
