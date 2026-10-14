@@ -86,7 +86,7 @@ class WorldsApp(App):
         ]
         for i in range(0, 29):
             self.inventory_list.append(('assets/land', f'{i}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/land/'))
-        for tex in ['flag_east', 'flag_north', 'flag_south', 'flag_undead', ]:
+        for tex in ['flag_east', 'flag_north', 'flag_south', 'flag_undead', 'gipat2sys', 'gipatsys', 'ingossys', 'jigransys', 'quater01', 'suslangersys', ]:
             self.inventory_list.append(('textures/model', f'{tex}.png', [], 'https://raw.githubusercontent.com/bitdust-io/worlds/refs/heads/main/assets/flags/'))
         self.downloading_list = []
         for folder, file_name, file_parts, url_prefix in self.inventory_list:
